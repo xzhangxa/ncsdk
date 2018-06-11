@@ -20,9 +20,16 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "" FORCE)
 endif()
 
+option(WITH_TOOLKIT "Include toolkit" ON)
+
 include(${PROJECT_SOURCE_DIR}/cmake/download.cmake)
+include(${PROJECT_SOURCE_DIR}/cmake/python.cmake)
 
 add_subdirectory(api)
+
+if(WITH_TOOLKIT)
+    add_subdirectory(tk)
+endif()
 
 # setup/install project CMake config file
 set(INSTALL_CONFIG_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/ncsdk)

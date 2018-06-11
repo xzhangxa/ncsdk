@@ -22,6 +22,8 @@ target_link_libraries(mvnc PRIVATE ${CMAKE_THREAD_LIBS_INIT} ${LibUSB_LIBRARIES}
 
 file(COPY ${CMAKE_CURRENT_LIST_DIR}/src/mvnc/MvNCAPI.mvcmd DESTINATION ${OUTPUT_DIR}/mvnc)
 
+py_packaging(mvnc_python python ${OUTPUT_DIR})
+
 install(TARGETS mvnc
     EXPORT mvncTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

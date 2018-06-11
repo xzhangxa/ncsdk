@@ -1,0 +1,18 @@
+set(folder @PYFOLDER@)
+set(dest @PYDESTFOLDER@)
+execute_process(
+    COMMAND python3 setup.py -q bdist_wheel
+    WORKING_DIRECTORY ${folder}
+)
+file(GLOB wheel "${folder}/dist/*.whl")
+file(GLOB egginfo "${folder}/*.egg-info")
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E copy ${wheel} ${dest}
+    WORKING_DIRECTORY ${folder}
+)
+execute_process(
+    COMMAND ${CMAKE_COMMAND} -E remove_directory dist
+    COMMAND ${CMAKE_COMMAND} -E remove_directory build
+    COMMAND ${CMAKE_COMMAND} -E remove_directory ${egginfo}
+    WORKING_DIRECTORY ${folder}
+)

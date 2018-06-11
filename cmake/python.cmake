@@ -1,0 +1,11 @@
+add_custom_target(pyncsdk)
+
+function(py_packaging target folder dest)
+    get_filename_component(folder_abs ${folder} ABSOLUTE)
+    get_filename_component(dest_abs ${dest} ABSOLUTE)
+    set(PYFOLDER ${folder_abs})
+    set(PYDESTFOLDER ${dest_abs})
+    configure_file(${PROJECT_SOURCE_DIR}/cmake/templates/py_packaging.cmake.in ${CMAKE_CURRENT_BINARY_DIR}/${target}/py_packaging.cmake @ONLY)
+    add_custom_target(${target} COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/${target}/py_packaging.cmake)
+    add_dependencies(pyncsdk ${target})
+endfunction()
