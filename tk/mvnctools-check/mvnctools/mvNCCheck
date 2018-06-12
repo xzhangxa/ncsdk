@@ -20,13 +20,13 @@ import os
 import sys
 import argparse
 import numpy as np
-from Controllers.EnumController import *
-from Controllers.FileIO import *
-from Models.Blob import *
-from Models.EnumDeclarations import *
-from Models.MyriadParam import *
-from Views.Validate import *
-from Controllers.Args import coords
+from mvnctools.Controllers.EnumController import *
+from mvnctools.Controllers.FileIO import *
+from mvnctools.Models.Blob import *
+from mvnctools.Models.EnumDeclarations import *
+from mvnctools.Models.MyriadParam import *
+from mvnctools.Views.Validate import *
+from mvnctools.Controllers.Args import coords
 
 major_version = np.uint32(2)
 release_number = np.uint32(0)
@@ -123,10 +123,10 @@ def check_net(network, image, inputnode=None, outputnode=None, nshaves=1, inputs
         get_myriad_info(args, myriad_config)
     filetype = network.split(".")[-1]
     if filetype in ["prototxt"]:
-        from Controllers.CaffeParser import parse_caffe
+        from mvnctools.Controllers.CaffeParser import parse_caffe
         net = parse_caffe(args, myriad_config, file_gen=True)
     elif filetype in ["pb", "protobuf", "meta"]:
-        from Controllers.TensorFlowParser import parse_tensor
+        from mvnctools.Controllers.TensorFlowParser import parse_tensor
         net = parse_tensor(args, myriad_config, file_gen=True)
     else:
         throw_error(ErrorTable.ParserNotSupported)

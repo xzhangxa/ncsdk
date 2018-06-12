@@ -15,8 +15,8 @@
 # approved by Intel in writing.
 
 import numpy as np
-from Models.EnumDeclarations import *
-from Controllers.EnumController import *
+from mvnctools.Models.EnumDeclarations import *
+from mvnctools.Controllers.EnumController import *
 from ctypes import *
 import math
 

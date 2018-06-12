@@ -17,8 +17,8 @@
 import warnings
 import ctypes
 import numpy as np
-from Models.EnumDeclarations import *
-from Controllers.EnumController import *
+from mvnctools.Models.EnumDeclarations import *
+from mvnctools.Controllers.EnumController import *
 
 data_offset = 0
 zero_data_offset = 0

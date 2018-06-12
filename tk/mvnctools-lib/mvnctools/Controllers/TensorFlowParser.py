@@ -20,13 +20,13 @@ import google.protobuf as proto
 import numpy as np
 import math
 import re
-from Models.Network import *
-from Models.NetworkStage import *
-from Models.EnumDeclarations import *
+from mvnctools.Models.Network import *
+from mvnctools.Models.NetworkStage import *
+from mvnctools.Models.EnumDeclarations import *
 from tensorflow.core.framework import graph_pb2
 from tensorflow.python.framework import ops
-from Controllers.TensorFlowPreproc import TFPreprocessor
-from Controllers.TensorFlowPreproc import PatternType
+from mvnctools.Controllers.TensorFlowPreproc import TFPreprocessor
+from mvnctools.Controllers.TensorFlowPreproc import PatternType
 
 sys.setrecursionlimit(5000)
 placeholder_dict = {}

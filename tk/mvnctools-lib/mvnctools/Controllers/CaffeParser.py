@@ -15,10 +15,10 @@
 # approved by Intel in writing.
 
 import numpy as np
-from Models.NetworkStage import *
-from Models.Network import *
-from Controllers.CaffeEnumController import *
-from Controllers.MiscIO import *
+from mvnctools.Models.NetworkStage import *
+from mvnctools.Models.Network import *
+from mvnctools.Controllers.CaffeEnumController import *
+from mvnctools.Controllers.MiscIO import *
 from google.protobuf import message
 from google.protobuf import text_format
 import os

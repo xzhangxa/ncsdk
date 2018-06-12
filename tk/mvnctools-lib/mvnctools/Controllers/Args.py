@@ -1,8 +1,8 @@
 import os
 import argparse
 
-from Controllers.EnumController import *
-from Controllers.MiscIO import *
+from mvnctools.Controllers.EnumController import *
+from mvnctools.Controllers.MiscIO import *
 
 
 class FathomArguments:

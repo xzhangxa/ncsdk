@@ -15,7 +15,7 @@
 # approved by Intel in writing.
 
 import sys
-from Models.EnumDeclarations import *
+from mvnctools.Models.EnumDeclarations import *
 
 
 def stage_as_label(stage):

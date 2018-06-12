@@ -1,6 +1,6 @@
 
-from Models.CaffeEnumDeclarations import *
-from Controllers.EnumController import *
+from mvnctools.Models.CaffeEnumDeclarations import *
+from mvnctools.Controllers.EnumController import *
 
 def isConvolution(layer):
     return layer in ["Convolution", CaffeStage.CONVOLUTION.value]

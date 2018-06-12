@@ -34,8 +34,8 @@ sys.path.append("../bin/")
 sys.path.append("./")
 from mvnc import mvncapi
 
-from Controllers.FileIO import *
-from Controllers.DataTransforms import *
+from mvnctools.Controllers.FileIO import *
+from mvnctools.Controllers.DataTransforms import *
 
 myriad_debug_size = 120
 handler = None

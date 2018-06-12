@@ -14,9 +14,9 @@
 # Any license under such intellectual property rights must be express and
 # approved by Intel in writing.
 
-from Controllers.MiscIO import *
+from mvnctools.Controllers.MiscIO import *
 import numpy as np
-from Models.NetworkStage import *
+from mvnctools.Models.NetworkStage import *
 import ctypes
 
 

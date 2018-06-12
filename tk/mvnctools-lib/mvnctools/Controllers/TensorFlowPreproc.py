@@ -1,5 +1,5 @@
 from enum import Enum
-from Models.NetworkStage import *
+from mvnctools.Models.NetworkStage import *
 
 
 class PatternType(Enum):

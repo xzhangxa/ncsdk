@@ -14,7 +14,7 @@
 # Any license under such intellectual property rights must be express and
 # approved by Intel in writing.
 
-from Models.EnumDeclarations import *
+from mvnctools.Models.EnumDeclarations import *
 import math
 import shutil
 

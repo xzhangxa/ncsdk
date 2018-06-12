@@ -18,7 +18,7 @@ import datetime
 from graphviz import Digraph
 import math
 import warnings
-from Controllers.EnumController import *
+from mvnctools.Controllers.EnumController import *
 import numpy as np
 
 

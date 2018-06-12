@@ -16,11 +16,11 @@
 
 import numpy as np
 from ctypes import *
-from Controllers.MiscIO import *
-from Controllers.DataTransforms import *
-from Controllers.EnumController import *
-from Models.EnumDeclarations import *
-from Views.Graphs import *
+from mvnctools.Controllers.MiscIO import *
+from mvnctools.Controllers.DataTransforms import *
+from mvnctools.Controllers.EnumController import *
+from mvnctools.Models.EnumDeclarations import *
+from mvnctools.Views.Graphs import *
 
 from linecache import getline
 

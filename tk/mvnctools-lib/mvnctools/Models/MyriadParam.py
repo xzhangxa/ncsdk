@@ -16,7 +16,7 @@
 
 import numpy as np
 from ctypes import *
-from Controllers.MiscIO import *
+from mvnctools.Controllers.MiscIO import *
 
 
 class MyriadParam:

@@ -16,8 +16,8 @@
 
 import numpy as np
 from ctypes import *
-from Controllers.MiscIO import *
-from Controllers.FileIO import *
+from mvnctools.Controllers.MiscIO import *
+from mvnctools.Controllers.FileIO import *
 import sys
 
 

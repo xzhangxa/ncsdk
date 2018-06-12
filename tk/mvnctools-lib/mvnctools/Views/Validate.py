@@ -14,9 +14,9 @@
 # Any license under such intellectual property rights must be express and
 # approved by Intel in writing.
 
-from Models.EnumDeclarations import *
-from Controllers.Metrics import *
-from Controllers.EnumController import *
+from mvnctools.Models.EnumDeclarations import *
+from mvnctools.Controllers.Metrics import *
+from mvnctools.Controllers.EnumController import *
 
 
 def top_test(result, exp_id, tolerance):
