@@ -1,0 +1,5 @@
+mvnc: 1.12.0.1
+mvnctools-lib: 2.0
+mvnctools-check: 2.0
+mvnctools-compile: 2.0
+mvnctools-profile: 2.0
