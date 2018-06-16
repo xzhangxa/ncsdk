@@ -1,0 +1,10 @@
+@PACKAGE_INIT@
+
+set(ncsdk_VERSION_MAJOR "@ncsdk_VERSION_MAJOR@")
+set(ncsdk_VERSION_MINOR "@ncsdk_VERSION_MINOR@")
+set(ncsdk_VERSION_PATCH "@ncsdk_VERSION_PATCH@")
+
+set_and_check(ncsdk_INCLUDE_DIR "@PACKAGE_CMAKE_INSTALL_INCLUDEDIR@")
+
+include("${CMAKE_CURRENT_LIST_DIR}/ncsdkTargets.cmake")
+set(ncsdk_LIBRARY ncsdk::mvnc)

@@ -1,0 +1,15 @@
+if(NOT EXISTS @DEST@)
+    message(STATUS "@MSG@")
+    file(DOWNLOAD
+        @URL@
+        @DEST@
+        SHOW_PROGRESS
+        STATUS ret_error
+        INACTIVITY_TIMEOUT 120
+    )
+    list(GET ret_error 0 status)
+    list(GET ret_error 1 err_msg)
+    if(NOT "${status}" STREQUAL "0")
+        message(FATAL_ERROR "@MSG@ : ${err_msg}")
+    endif()
+endif()
