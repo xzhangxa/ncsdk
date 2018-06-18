@@ -1,0 +1,6 @@
+add_subdirectory(hello_ncs_cpp)
+if(WITH_TOOLKIT)
+    if(${caffe_error} STREQUAL "0")
+        add_subdirectory(multistick_cpp)
+    endif()
+endif()

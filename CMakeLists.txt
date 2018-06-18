@@ -31,6 +31,8 @@ if(WITH_TOOLKIT)
     add_subdirectory(tk)
 endif()
 
+add_subdirectory(examples)
+
 include(ExternalProject)
 ExternalProject_Add(
     caffe
