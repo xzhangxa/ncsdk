@@ -1,4 +1,4 @@
-# Copyright 2017 Intel Corporation.
+# Copyright 2018 Intel Corporation.
 # The source code, information and material ("Material") contained herein is
 # owned by Intel Corporation or its suppliers or licensors, and title to such
 # Material remains with Intel Corporation or its suppliers or licensors.
@@ -37,7 +37,7 @@ def zyx_to_yxz_dimension_only(data, z=0, y=0, x=0):
     return (y, x, z)
 
 
-def zyx_to_yxz(data, data_type):
+def zyx_to_yxz(data, data_type=np.float16):
     """
     Converts from Channel-Major (Column-Minor) to Row-Major (Channel-Minor)
 
@@ -79,55 +79,35 @@ def yxz_to_zyx(data, y=0, x=0, z=0):
     return trans
 
 
-def xyz_to_zyx(data, x=0, y=0, z=0):
+def xyz_to_zyx(data):
     """
      Reverses dimensions of matrix.
-
-     Assumes data is not flattened. If it is flattened, pass in y, x, z parameters
-     :param data:
-     :param y:
-     :param x:
-     :param z:
     """
-
-    x = data.shape[0] if x == 0 else x
-    y = data.shape[1] if y == 0 else y
-    z = data.shape[2] if z == 0 else z
-
     trans = data.swapaxes(0, 2)
 
     return trans
 
 
-def xyz_to_yxz(data, y=0, x=0, z=0):
+def xyz_to_yxz(data):
     """
      Converts from Row-Major (Channel-Minor) to Channel-Major (Column-Minor)
-
-     Assumes data is not flattened. If it is flattened, pass in y, x, z parameters
-     :param data:
-     :param y:
-     :param x:
-     :param z:
     """
-
-    x = data.shape[0] if x == 0 else x
-    y = data.shape[1] if y == 0 else y
-    z = data.shape[2] if z == 0 else z
-
     trans = data.swapaxes(0, 1)
-
     return trans
 
 
-def yxz_to_xyz(data, y=0, x=0, z=0):
-    y = data.shape[0] if y == 0 else y
-    x = data.shape[1] if x == 0 else x
-    z = data.shape[2] if z == 0 else z
-
+def yxz_to_xyz(data):
     trans = data.swapaxes(0, 1)
-
     return trans
 
+def yzx_to_zyx(data):
+    trans = data.swapaxes(0, 1)
+    return trans
+
+def yzx_to_yxz(data):
+    trans = data.swapaxes(1, 2)
+
+    return trans
 
 def kchw_to_hwck(data, k=0, c=0, fh=0, fw=0):
     """
@@ -164,3 +144,46 @@ def hwck_transpose_correction(data, fh=0, fw=0, c=0, k=0):
 
 def merge_buffers_zyz(data):
     return
+
+
+def storage_order_reshape(shape, layout, newLayout):
+    newShape = (0, 0, 0)
+    if ((layout == StorageOrder.orderZYX and newLayout == StorageOrder.orderYXZ) or 
+        (layout == StorageOrder.orderYXZ and newLayout == StorageOrder.orderZYX)):
+        newShape = (shape[1], shape[2], shape[0])
+    elif ((layout == StorageOrder.orderYXZ and newLayout == StorageOrder.orderYZX) or 
+        (layout == StorageOrder.orderYZX and newLayout == StorageOrder.orderYXZ)):
+        newShape = (shape[0], shape[2], shape[1])
+    elif (layout == newLayout):
+        newShape = shape
+    else:
+        throw_error(ErrorTable.ConversionNotSupported, newLayout)
+    return newShape
+
+def storage_order_convert(data, layout, newLayout):
+    """
+    Converts the 'data' volume assumed to be in the StorageOrder specified 
+    by 'layout' into a new volume with layout specified by 'newLayout'
+    """
+    newData = (0, 0, 0)
+    if (layout == StorageOrder.orderZYX and newLayout == StorageOrder.orderYXZ):
+        newData = zyx_to_yxz(data)
+    elif (layout == StorageOrder.orderXYZ and newLayout == StorageOrder.orderYXZ):
+        newData = xyz_to_yxz(data)
+    elif (layout == StorageOrder.orderXYZ and newLayout == StorageOrder.orderZYX):
+        newData = xyz_to_zyx(data)
+    elif (layout == StorageOrder.orderYXZ and newLayout == StorageOrder.orderZYX):
+        newData = yxz_to_zyx(data)
+    elif (layout == StorageOrder.orderYXZ and newLayout == StorageOrder.orderXYZ):
+        newData = yxz_to_xyz(data)
+    elif (layout == StorageOrder.orderYZX and newLayout == StorageOrder.orderZYX):
+        newData = yzx_to_zyx(data)
+    elif (layout == StorageOrder.orderYZX and newLayout == StorageOrder.orderYXZ):
+        newData = yzx_to_yxz(data)
+    elif (layout == newLayout):
+        newData = data
+    else: 
+        print("storage_order_convert:  %s -> %s" % (layout, newLayout))
+        throw_error(ErrorTable.ConversionNotSupported, newLayout)
+
+    return newData

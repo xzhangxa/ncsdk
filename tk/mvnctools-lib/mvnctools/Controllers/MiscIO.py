@@ -1,4 +1,4 @@
-# Copyright 2017 Intel Corporation.
+# Copyright 2018 Intel Corporation.
 # The source code, information and material ("Material") contained herein is
 # owned by Intel Corporation or its suppliers or licensors, and title to such
 # Material remains with Intel Corporation or its suppliers or licensors.
@@ -20,10 +20,15 @@ import struct
 import numpy as np
 import warnings
 import os
-import os.path
+import os.path	#noqa
 import time
 from enum import Enum
+from mvnc import mvncapi
+from mvnctools.Controllers.FileIO import *  # noqa
+from mvnctools.Controllers.DataTransforms import *  # noqa
 import re
+
+import mvnctools.Controllers.Globals as GLOBALS
 
 if sys.version_info[:2] == (3, 4):
     sys.path.append("../bin/mvNCToolkit_p34")
@@ -32,10 +37,6 @@ elif sys.version_info[:2] == (3, 5):
 
 sys.path.append("../bin/")
 sys.path.append("./")
-from mvnc import mvncapi
-
-from mvnctools.Controllers.FileIO import *
-from mvnctools.Controllers.DataTransforms import *
 
 myriad_debug_size = 120
 handler = None
@@ -56,26 +57,26 @@ def set_string_range(string, length):
 def get_myriad_info(arguments, myriad_param):
     global device
     if device is None:
-        devices = mvncapi.EnumerateDevices()
+        devices = mvncapi.enumerate_devices()
         if len(devices) == 0:
             throw_error(ErrorTable.USBError, 'No devices found')
 
         # Choose the first device unless manually specified
         if arguments.device_no is not None:
             print(devices[0], arguments.device_no)
-            device = mvncapi.Device(arguments.device_no)
+            device = mvncapi.Device(devices[arguments.device_no])
         else:
             device = mvncapi.Device(devices[0])
         try:
-            device.OpenDevice()
+            device.open()
         except:
             throw_error(ErrorTable.USBError, 'Error opening device')
-    myriad_param.optimization_list = device.GetDeviceOption(
-        mvncapi.DeviceOption.OPTIMISATION_LIST)
+    myriad_param.optimization_list = device.get_option(
+        mvncapi.DeviceOptionClass2.RO_OPTIMISATION_LIST)
     return
 
 
-def run_myriad(blob, arguments, file_gen=False):
+def run_myriad(blob, arguments):
     """
     Runs our myriad elf
     :param elf: path to elf.
@@ -92,67 +93,109 @@ def run_myriad(blob, arguments, file_gen=False):
     f = open(blob.blob_name, 'rb')
     blob_file = f.read()
     if device is None:
-        devices = mvncapi.EnumerateDevices()
+        devices = mvncapi.enumerate_devices()
         if len(devices) == 0:
             throw_error(ErrorTable.USBError, 'No devices found')
 
         # Choose the first device unless manually specified
         if arguments.device_no is not None:
-            device = mvncapi.Device(arguments.device_no)
+            device = mvncapi.Device(devices[arguments.device_no])
         else:
             device = mvncapi.Device(devices[0])
 
         try:
-            device.OpenDevice()
+            device.open()
         except:
             throw_error(ErrorTable.USBError, 'Error opening device')
     net.inputTensor = net.inputTensor.astype(dtype=np.float16)
-    if arguments.save_input is not None:
-        net.inputTensor.tofile(arguments.save_input)
+    input_image = net.inputTensor
+    if arguments.ma2480 and not arguments.new_parser:
+        if GLOBALS.INPUT_IN_INTERLEAVED:
+            # Restore shape and convert to Channel Minor
+            s = input_image.shape
+            si = (s[0], s[2], s[1], s[3])
+            input_image = input_image.reshape(si)
+            input_image = np.swapaxes(input_image, 2, 3)
+        else:
+            # Restore shape and convert to Channel Minor
+            s = input_image.shape
+            si = (s[0], s[1], s[2], s[3])
+            input_image = input_image.reshape(si)
+            input_image = np.swapaxes(input_image, 1, 3)
+            input_image = np.swapaxes(input_image, 1, 2)
+
+
     print("USB: Transferring Data...")
     if arguments.lower_temperature_limit != -1:
-        device.SetDeviceOption(
-            mvncapi.DeviceOption.TEMP_LIM_LOWER,
+        device.set_option(
+            mvncapi.DeviceOptionClass2.RW_TEMP_LIM_LOWER,
             arguments.lower_temperature_limit)
     if arguments.upper_temperature_limit != -1:
-        device.SetDeviceOption(
-            mvncapi.DeviceOption.TEMP_LIM_HIGHER,
+        device.set_option(
+            mvncapi.DeviceOptionClass2.RW_TEMP_LIM_HIGHER,
             arguments.upper_temperature_limit)
     if arguments.backoff_time_normal != -1:
-        device.SetDeviceOption(
-            mvncapi.DeviceOption.BACKOFF_TIME_NORMAL,
+        device.set_option(
+            mvncapi.DeviceOptionClass2.RW_BACKOFF_TIME_NORMAL,
             arguments.backoff_time_normal)
     if arguments.backoff_time_high != -1:
-        device.SetDeviceOption(
-            mvncapi.DeviceOption.BACKOFF_TIME_HIGH,
+        device.set_option(
+            mvncapi.DeviceOptionClass2.RW_BACKOFF_TIME_HIGH,
             arguments.backoff_time_high)
     if arguments.backoff_time_critical != -1:
-        device.SetDeviceOption(
-            mvncapi.DeviceOption.BACKOFF_TIME_CRITICAL,
+        device.set_option(
+            mvncapi.DeviceOptionClass2.RW_BACKOFF_TIME_CRITICAL,
             arguments.backoff_time_critical)
-    device.SetDeviceOption(
-        mvncapi.DeviceOption.TEMPERATURE_DEBUG,
-        1 if arguments.temperature_mode == 'Simple' else 0)
-    graph = device.AllocateGraph(blob_file)
-    graph.SetGraphOption(
-        mvncapi.GraphOption.ITERATIONS,
-        arguments.number_of_iterations)
-    graph.SetGraphOption(
-        mvncapi.GraphOption.NETWORK_THROTTLE,
-        arguments.network_level_throttling)
+#    device.set_option(
+#        mvncapi.DeviceOptionClass2.RW_TEMPERATURE_DEBUG,
+#        1 if arguments.temperature_mode == 'Simple' else 0)
+    graph = mvncapi.Graph("graph");
+    graph.allocate(device, blob_file)
 
-    sz = net.outputTensor
+#    graph.set_option(
+#        mvncapi.GraphOptionClass1.ITERATIONS,
+#        arguments.number_of_iterations)
+#    graph.set_option(
+#        mvncapi.GraphOptionClass1.NETWORK_THROTTLE,
+#        arguments.network_level_throttling)
+
+    fifoIn = mvncapi.Fifo("fifoIn0", mvncapi.FifoType.HOST_WO)
+    fifoOut = mvncapi.Fifo("fifoOut0", mvncapi.FifoType.HOST_RO)
+    fifoIn.set_option(mvncapi.FifoOption.RW_DATA_TYPE, mvncapi.FifoDataType.FP16)
+    fifoOut.set_option(mvncapi.FifoOption.RW_DATA_TYPE, mvncapi.FifoDataType.FP16)
+    descIn = graph.get_option(mvncapi.GraphOption.RO_INPUT_TENSOR_DESCRIPTORS)
+    descOut = graph.get_option(mvncapi.GraphOption.RO_OUTPUT_TENSOR_DESCRIPTORS)
+    fifoIn.allocate(device, descIn[0], 2)
+    fifoOut.allocate(device, descOut[0], 2)
+
+    if arguments.save_input is not None:
+        if arguments.new_parser:
+            pad_shape = list(net.inputTensors[0].getTopEncloserRecursive().getShape()[1:])
+            
+            # convert shape to channel minor
+            pad_shape = [pad_shape[1], pad_shape[2], pad_shape[0]]
+
+            saved_tensor = np.pad(net.inputTensor,
+                                [(0, pad_shape[i]-net.inputTensor.shape[i]) for i in range(len(pad_shape))],
+                                mode='constant', constant_values=0)
+        else:
+            if GLOBALS.USING_MA2480 and net.inputTensor.shape[1] == 3:
+                saved_tensor = np.pad(net.inputTensor,[(0,0), (0,1), (0,0), (0,0)],
+                                mode='constant', constant_values=0)
+
+        net.inputTensor.tofile(arguments.save_input)
 
     for y in range(arguments.stress_full_run):
         if arguments.timer:
             import time
             ts = time.time()
-        graph.LoadTensor(net.inputTensor, None)
+        graph.queue_inference_with_fifo_elem(fifoIn, fifoOut, input_image, None)
         try:
-            myriad_output, userobj = graph.GetResult()
+            myriad_output, userobj = fifoOut.read_elem()
         except Exception as e:
+            print("GetResult exception")
             if e.args[0] == mvncapi.Status.MYRIAD_ERROR:
-                debugmsg = graph.GetGraphOption(mvncapi.GraphOption.DEBUG_INFO)
+                debugmsg = graph.get_option(mvnc.DeviceOption.RO_DEBUG_INFO)
                 throw_error(ErrorTable.MyriadRuntimeIssue, debugmsg)
             else:
                 throw_error(ErrorTable.MyriadRuntimeIssue, e.args[0])
@@ -164,11 +207,11 @@ def run_myriad(blob, arguments, file_gen=False):
 
         print("USB: Myriad Execution Finished")
 
-    timings = graph.GetGraphOption(mvncapi.GraphOption.TIME_TAKEN)
+    timings = graph.get_option(mvncapi.GraphOption.RO_TIME_TAKEN)
     if arguments.mode in [OperationMode.temperature_profile]:
-        tempBuffer = device.GetDeviceOption(mvncapi.DeviceOption.THERMAL_STATS)
-    throttling = device.GetDeviceOption(
-        mvncapi.DeviceOption.THERMAL_THROTTLING_LEVEL)
+        tempBuffer = device.get_option(mvncapi.DeviceOption.RO_THERMAL_STATS)
+    throttling = device.get_option(
+        mvncapi.DeviceOption.RO_THERMAL_THROTTLING_LEVEL)
     if throttling == 1:
         print("*********** THERMAL THROTTLING INITIATED ***********")
     if throttling == 2:
@@ -176,54 +219,103 @@ def run_myriad(blob, arguments, file_gen=False):
         print("*           THERMAL THROTTLING LEVEL 2 REACHED          *")
         print("*********************************************************")
 
-    if arguments.save_output is not None:
-        myriad_output.tofile(arguments.save_output)
+    if arguments.new_parser:
+        # TODO: Clean up all this code.
+        if net.outputIsSsdDetOut:
+            no_detections = int(myriad_output[0])
+            myriad_output = myriad_output[7 : (no_detections + 1) * 7]
+            myriad_output = myriad_output.reshape(no_detections, 7, 1)
+            myriad_output = yxz_to_zyx(myriad_output)
+            # Match with caffe output
+            myriad_output = np.expand_dims(myriad_output, axis=0)
+        else:
+            sz = net.outputTensor
+            print("Output is in Channel Minor format")
+            myriad_output = myriad_output.reshape(sz[2], sz[3], sz[1]).transpose(2, 0, 1)
+
+            # Do a final reshape to match caffe output
+            myriad_output = myriad_output.reshape(sz)
+
+    else:
+        assert len(net.outputTensorShape) == 3, "Output tensor must have 3 axes !"
+        if net.outputIsSsdDetOut:
+            no_detections = int(myriad_output[0])
+            myriad_output = myriad_output[7 : (no_detections + 1) * 7]
+            myriad_output = myriad_output.reshape(no_detections, 7, 1)
+        else:
+            sz = [1]
+            sz.extend(list(net.outputTensorShape))
+            myriad_output = myriad_output.reshape(sz[1], sz[2], sz[3])
+            myriad_output = myriad_output.reshape(net.outputTensorShape)
 
     if arguments.mode in [OperationMode.temperature_profile]:
         net.temperature_buffer = tempBuffer
 
-    if net.outputIsSsdDetOut:
-        no_detections = int(myriad_output[0])
-        myriad_output = myriad_output[7 : (no_detections + 1) * 7]
-        myriad_output = myriad_output.reshape(no_detections, 7, 1)
-        if arguments.parser == Parser.Caffe:
-            myriad_output = yxz_to_zyx(myriad_output)
-    else:
-        myriad_output = myriad_output.reshape(sz)
-
-        if arguments.parser == Parser.Caffe:
-            if net.outputNeedsTransforming and len(myriad_output.shape) > 2:
-                if len(myriad_output.shape) == 4:
-                    myriad_output = myriad_output.reshape(myriad_output.shape[1:])
-                if file_gen:
-                    np.save(arguments.outputs_name + "_result.npy", myriad_output)
-                myriad_output = yxz_to_zyx(myriad_output)
-        elif arguments.parser == Parser.TensorFlow:
-            myriad_output = myriad_output.reshape(myriad_output.shape[1:])
-        else:
-            throw_error(ErrorTable.ParserNotSupported, string)
-
-    if file_gen:
-        np.save(arguments.outputs_name + "_result.npy", myriad_output)
+    if arguments.save_output is not None:
+        myriad_output.tofile(arguments.save_output)
+        np.save("Fathom_result.npy", myriad_output)
 
     print("USB: Myriad Connection Closing.")
-    graph.DeallocateGraph()
-    device.CloseDevice()
+    fifoIn.destroy()
+    fifoOut.destroy()
+    graph.destroy()
+    device.close()
     print("USB: Myriad Connection Closed.")
     return timings, myriad_output
 
 
-def run_emulation(blob):
-    """
-    Runs Python Verification ?
-    :param blob:
-    :return:
-    """
-    net = blob.network
-    print(net.name)
-    # Traverse
+# Apply scale, mean, and channel_swap to array
+def preprocess_img(data, raw_scale=1, mean=None, channel_swap=None):
+    if raw_scale is not None:
+        data *= raw_scale
 
+    if channel_swap is not None:
+        data[0] = data[0][np.argsort(channel_swap), :, :]
 
+    if mean is not None:
+        # Try loading mean from .npy file
+        if re.search('[a-zA-Z]+', mean):
+            try:
+                mean = np.load(mean)
+            except:
+                throw_error(ErrorTable.InvalidNpyFile, mean)
+
+            mean = mean.mean(1).mean(1)
+            mean_arr = np.zeros(data.shape[1:])
+
+            for x in range(mean.shape[0]):
+                mean_arr[x].fill(mean[x])
+
+            data[0] -= mean_arr
+
+        # Else, try loading mean as tuple
+        elif re.search('[,]+', mean):
+            try:
+                (R, G, B) = mean.split(',')
+            except:
+                throw_error(ErrorTable.InvalidTuple, mean)
+
+            mean = np.asarray([float(R), float(G), float(B)])
+            mean_arr = np.zeros(data.shape[1:])
+
+            for x in range(mean.shape[0]):
+                mean_arr[x].fill(mean[x])
+
+            data[0] -= mean_arr
+
+        # Else, load mean as single number
+        elif re.search(r'\d+', mean):
+            try:
+                data = data - float(mean)
+            except:
+                throw_error(ErrorTable.InvalidMean, mean)
+
+        # Else, invalid mean input
+        else:
+            throw_error(ErrorTable.InvalidMean, mean)
+    return data
+
+            
 def parse_img(path, new_size, raw_scale=1, mean=None, channel_swap=None):
     """
     Parse an image with the Python Imaging Libary and convert to 4D numpy array
@@ -284,52 +376,7 @@ def parse_img(path, new_size, raw_scale=1, mean=None, channel_swap=None):
     data = np.transpose(data, (2, 0, 1))
     data = np.reshape(data, (1, data.shape[0], data.shape[1], data.shape[2]))
 
-    data *= raw_scale
-
-    if channel_swap is not None:
-        data[0] = data[0][np.argsort(channel_swap), :, :]
-
-    if mean is not None:
-        # Try loading mean from .npy file
-        if re.search('[a-zA-Z]+', mean):
-            try:
-                mean = np.load(mean)
-            except:
-                throw_error(ErrorTable.InvalidNpyFile, mean)
-
-            mean = mean.mean(1).mean(1)
-            mean_arr = np.zeros(data.shape[1:])
-
-            for x in range(mean.shape[0]):
-                mean_arr[x].fill(mean[x])
-
-            data[0] -= mean_arr
-
-        # Else, try loading mean as tuple
-        elif re.search('[,]+', mean):
-            try:
-                (R,G,B) = mean.split(',')
-            except:
-                throw_error(ErrorTable.InvalidTuple, mean)
-
-            mean = np.asarray([float(R), float(G), float(B)])
-            mean_arr = np.zeros(data.shape[1:])
-
-            for x in range(mean.shape[0]):
-                mean_arr[x].fill(mean[x])
-
-            data[0] -= mean_arr
-
-        # Else, load mean as single number
-        elif re.search(r'\d+', mean):
-            try:
-                data = data - float(mean)
-            except:
-                throw_error(ErrorTable.InvalidMean, mean)
-
-        # Else, invalid mean input
-        else:
-            throw_error(ErrorTable.InvalidMean, mean)
+    data = preprocess_img(data, raw_scale, mean, channel_swap)
 
     return data
 
@@ -472,7 +519,7 @@ def readOptimisationMask(name, stage, myriad_config, args):
     defaultOptimisation = 0x80000000
     startDefault = defaultOptimisation
 
-    if myriad_config.optimization_list is None or (
+    if myriad_config is None or myriad_config.optimization_list is None or (
         args.conf_file == "optimisation.conf" and not os.path.isfile(
             args.conf_file)):
         return defaultOptimisation

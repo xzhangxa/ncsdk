@@ -1,5 +1,4 @@
-add_executable(caffe_googlenet EXCLUDE_FROM_ALL cpp/run.cpp cpp/fp16.c cpp/fp16.h cpp/stb_image.h cpp/stb_image_resize.h)
-set_source_files_properties(cpp/fp16.c PROPERTIES LANGUAGE CXX)
+add_executable(caffe_googlenet EXCLUDE_FROM_ALL cpp/run.cpp cpp/stb_image.h cpp/stb_image_resize.h)
 target_link_libraries(caffe_googlenet mvnc)
 set_target_properties(caffe_googlenet PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/cpp)
 

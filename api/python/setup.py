@@ -1,4 +1,3 @@
-import re
 from setuptools import setup
 
 license = ""
@@ -7,11 +6,8 @@ version = ""
 with open("../../LICENSE", encoding="utf-8") as f:
     license = "\n" + f.read()
 
-for line in open("../../VERSION", encoding="utf-8"):
-    m = re.search("mvnc[^\w]*?([\d\.]+)", line)
-    if m:
-        version = m.group(1)
-        break
+line = open("../version.txt", encoding="utf-8").readlines()[0]
+version = line.rstrip('\n')
 
 setup(
     name = "mvnc",

@@ -1,5 +1,4 @@
-add_executable(multistick_cpp EXCLUDE_FROM_ALL cpp/multistick.cpp cpp/fp16.c cpp/fp16.h cpp/stb_image.h cpp/stb_image_resize.h)
-set_source_files_properties(cpp/fp16.c PROPERTIES LANGUAGE CXX)
+add_executable(multistick_cpp EXCLUDE_FROM_ALL cpp/multistick.cpp cpp/stb_image.h cpp/stb_image_resize.h)
 target_link_libraries(multistick_cpp mvnc)
 set_target_properties(multistick_cpp PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}/cpp)
 

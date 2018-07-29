@@ -1,4 +1,4 @@
-# Copyright 2017 Intel Corporation.
+# Copyright 2018 Intel Corporation.
 # The source code, information and material ("Material") contained herein is
 # owned by Intel Corporation or its suppliers or licensors, and title to such
 # Material remains with Intel Corporation or its suppliers or licensors.
@@ -27,7 +27,6 @@ bss_buffer = []
 # It will be incremented on first use
 buffer_index = MemoryIndex.workbuffer.value - 1
 
-
 def file_init():
     global data_offset
     global zero_data_offset
@@ -42,8 +41,22 @@ def file_init():
     # It will be incremented on first use
     buffer_index = MemoryIndex.workbuffer.value - 1
 
+class Buffer():
+    def __init__(self, x ,y, z, sx, sy, sz, offset,location,  dtype=DataType.fp16.value, order=StorageOrder.orderYXZ):
+        self.x = x
+        self.y = y
+        self.z = z
+        self.x_s = sx
+        self.y_s = sy
+        self.z_s = sz
+        self.location = location    # What Buffer
+        self.offset = offset        # Offset into that buffer
+        self.dtype = dtype
+        self.order = order
+
 
 def get_numpy_element_byte_size(array):
+    # TODO: Move this to enumControllers.
     if array.dtype == np.float32 \
             or array.dtype == np.int32 \
             or array.dtype == np.uint32:
@@ -62,6 +75,14 @@ def get_numpy_element_byte_size(array):
         return 1
 
     throw_error(ErrorTable.DataTypeNotSupported, array.dtype)
+
+def override_global_buffer(new_buffer):
+    global buffer
+    buffer = new_buffer
+
+def override_global_bssbuffer(new_buffer):
+    global bss_buffer
+    bss_buffer = new_buffer
 
 
 def align(offset, data, align_to=64):
@@ -84,7 +105,7 @@ def align(offset, data, align_to=64):
     return new_offset, new_data
 
 
-def get_buffer(for_data, datatype):
+def get_buffer(for_data, datatype, hwAlignment=False, op=None, tapsOrder=None):
     """
     Gets an offset for a buffer in the blob file. Relative to the start of the blob file.
     :param for_data: The data to be added to the global write buffer
@@ -93,7 +114,36 @@ def get_buffer(for_data, datatype):
     """
     global data_offset
     global buffer
-    buffer_size = len(for_data.flatten()) * dtype_size(datatype)
+
+    if hwAlignment and op in [StageType.fully_connected_layer, StageType.myriadX_fully_connected_layer,
+        StageType.myriadX_convolution, StageType.convolution]:
+
+        def roundup8(x):
+            return ((x + 7) // 8) * 8
+
+        if len(for_data.shape) == 4:
+            if tapsOrder == TapsOrder.orderKCHW:
+                dataLength = roundup8(for_data.shape[0]) * np.prod(for_data.shape[1:4])
+            elif tapsOrder == TapsOrder.orderHWCK:
+                dataLength = roundup8(for_data.shape[3]) * np.prod(for_data.shape[0:3])
+            else:
+                assert(False)
+        elif len(for_data.shape) == 2:
+            if tapsOrder == TapsOrder.orderKCHW:
+                dataLength = roundup8(for_data.shape[0]) * for_data.shape[1]
+            elif tapsOrder == TapsOrder.orderHWCK:
+                dataLength = roundup8(for_data.shape[1]) * for_data.shape[0]
+            else:
+                assert(False)
+        else:
+            assert(False)
+    else:
+        dataLength = for_data.size
+
+    if dataLength > for_data.size:
+        for_data = np.pad(for_data.flatten(), (0, dataLength - for_data.size), mode="constant")
+
+    buffer_size = dataLength * dtype_size(datatype)
     (buffer_size, for_data) = align(buffer_size, for_data, 64)
     buffer.append(for_data)
 
@@ -101,7 +151,7 @@ def get_buffer(for_data, datatype):
     return data_offset - buffer_size, len(buffer)
 
 
-def get_zero_buffer(for_data, datatype):
+def get_zero_buffer(for_data, datatype, debug = False):
     """
     Gets an offset for a buffer in the work buffer. Relative to the start of the blob file.
                        +----------+
@@ -150,13 +200,15 @@ def get_zero_buffer(for_data, datatype):
     bss_buffer.append(for_data)
     zero_data_offset += buffer_size
     buffer_index += 1
-    if zero_data_offset - buffer_size + pad + buffer_index > 100 * 1024 * 1024:
+    if debug:
+        print("Created buffer " + str(buffer_index) + " with size " + str(buffer_size) + ", total " + str(zero_data_offset))
+    if zero_data_offset - buffer_size > 100 * 1024 * 1024:
         throw_error(ErrorTable.NoResources)
 
-    return zero_data_offset - buffer_size + pad, buffer_index
+    return zero_data_offset - buffer_size , buffer_index
 
 
-def replace_buffer(new_data, offset, datatype):
+def replace_buffer(new_data, offset, datatype, hwAlignment=False, originalShape=None, op=None, tapsOrder=None):
     """
     In case a buffer needs to be reshaped, you must also edit the global buffer that will be written to file.
     THE BUFFER MUST REMAIN THE SAME SIZE AS BEFORE or you may experience unexpected results.
@@ -173,7 +225,23 @@ def replace_buffer(new_data, offset, datatype):
         return
 
     global buffer
-    buffer_size = len(new_data.flatten()) * dtype_size(datatype)
+    if hwAlignment and op in [StageType.fully_connected_layer, StageType.myriadX_fully_connected_layer,
+        StageType.myriadX_convolution, StageType.convolution]:
+
+        def roundup8(x):
+            return ((x + 7) // 8) * 8
+
+        if len(new_data.shape) == 4:
+            dataLength = roundup8(originalShape[0]) * np.prod(originalShape[1:4])
+        elif len(new_data.shape) == 2:
+            dataLength = roundup8(new_data.shape[0]) * new_data.shape[1]
+    else:
+        dataLength = new_data.size
+
+    if dataLength > new_data.size:
+        new_data = np.pad(new_data.flatten(), (0, dataLength - new_data.size), mode="constant")
+
+    buffer_size = dataLength * dtype_size(datatype)
     (buffer_size, new_data) = align(buffer_size, new_data)
 
     # print(offset)
@@ -190,6 +258,11 @@ def write_data(f):
     for data in buffer:
         f.write(data)
 
+
+def get_index_into_buffer(idx):
+    global buffer
+    byte_count = sum([a.flatten().shape[0] * get_numpy_element_byte_size(a) for a in buffer[0:idx]])
+    return byte_count
 
 def data_size():
     global buffer

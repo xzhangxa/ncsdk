@@ -18,24 +18,24 @@ import skimage.transform
 import mvnc.mvncapi as mvnc
 
 # Number of top prodictions to print
-NUM_PREDICTIONS      = 2
+NUM_PREDICTIONS		= 5
 
 # Variable to store commandline arguments
-ARGS                 = None
+ARGS                = None
 
 # ---- Step 1: Open the enumerated device and get a handle to it -------------
 
 def open_ncs_device():
 
     # Look for enumerated NCS device(s); quit program if none found.
-    devices = mvnc.EnumerateDevices()
+    devices = mvnc.enumerate_devices()
     if len( devices ) == 0:
         print( "No devices found" )
         quit()
 
     # Get a handle to the first enumerated device and open it
     device = mvnc.Device( devices[0] )
-    device.OpenDevice()
+    device.open()
 
     return device
 
@@ -48,47 +48,55 @@ def load_graph( device ):
         blob = f.read()
 
     # Load the graph buffer into the NCS
-    graph = device.AllocateGraph( blob )
+    graph = mvnc.Graph( ARGS.graph )
+    # Set up fifos
+    fifo_in, fifo_out = graph.allocate_with_fifos( device, blob )
 
-    return graph
+    return graph, fifo_in, fifo_out
 
 # ---- Step 3: Pre-process the images ----------------------------------------
 
-def pre_process_image( img_draw ):
+def pre_process_image():
 
-    # Resize image [Image size is defined during training]
-    img = skimage.transform.resize( img_draw, ARGS.dim, preserve_range=True )
+    # Read & resize image [Image size is defined during training]
+    img = skimage.io.imread( ARGS.image )
+    img = skimage.transform.resize( img, ARGS.dim, preserve_range=True )
 
-    # Convert RGB to BGR [skimage reads image in RGB, some networks may need BGR]
-    if( ARGS.colormode == "bgr" ):
+    # Convert RGB to BGR [skimage reads image in RGB, but Caffe uses BGR]
+    if( ARGS.colormode == "BGR" ):
         img = img[:, :, ::-1]
 
     # Mean subtraction & scaling [A common technique used to center the data]
-    img = img.astype( numpy.float16 )
-    img = ( img - numpy.float16( ARGS.mean ) ) * ARGS.scale
+    img = ( img - ARGS.mean ) * ARGS.scale
 
     return img
 
 # ---- Step 4: Read & print inference results from the NCS -------------------
 
-def infer_image( graph, img ):
+def infer_image( graph, img, fifo_in, fifo_out ):
 
+    # Load the labels file 
+    labels =[ line.rstrip('\n') for line in 
+                   open( ARGS.labels ) if line != 'classes\n'] 
+    
+    
     # The first inference takes an additional ~20ms due to memory 
     # initializations, so we make a 'dummy forward pass'.
-    graph.LoadTensor( img, 'user object' )
-    output, userobj = graph.GetResult()
+    graph.queue_inference_with_fifo_elem( fifo_in, fifo_out, img.astype(numpy.float32), None )
 
-    # Load the image as a half-precision floating point array
-    graph.LoadTensor( img, 'user object' )
+    output, userobj = fifo_out.read_elem()
+
+    # Load the image as an array
+    graph.queue_inference_with_fifo_elem( fifo_in, fifo_out, img.astype(numpy.float32), None )
 
     # Get the results from NCS
-    output, userobj = graph.GetResult()
+    output, userobj = fifo_out.read_elem()
 
     # Sort the indices of top predictions
     order = output.argsort()[::-1][:NUM_PREDICTIONS]
 
     # Get execution time
-    inference_time = graph.GetGraphOption( mvnc.GraphOption.TIME_TAKEN )
+    inference_time = graph.get_option( mvnc.GraphOption.RO_TIME_TAKEN )
 
     # Print the results
     print( "\n==============================================================" )
@@ -105,24 +113,26 @@ def infer_image( graph, img ):
         skimage.io.imshow( ARGS.image )
         skimage.io.show()
 
-# ---- Step 5: Unload the graph and close the device -------------------------
+# ---- Step 5: Close/clean up fifos, graph, and device -------------------------
 
-def close_ncs_device( device, graph ):
-    graph.DeallocateGraph()
-    device.CloseDevice()
+def clean_up(device, graph, fifo_in, fifo_out):
+    fifo_in.destroy()
+    fifo_out.destroy()
+    graph.destroy()
+    device.close()
+    device.destroy()
 
 # ---- Main function (entry point for this script ) --------------------------
 
 def main():
 
     device = open_ncs_device()
-    graph = load_graph( device )
+    graph, fifo_in, fifo_out = load_graph( device )
 
-    img_draw = skimage.io.imread( ARGS.image )
-    img = pre_process_image( img_draw )
-    infer_image( graph, img )
+    img = pre_process_image()
+    infer_image( graph, img, fifo_in, fifo_out )
 
-    close_ncs_device( device, graph )
+    clean_up(device, graph, fifo_in, fifo_out)
 
 # ---- Define 'main' function as the entry point for this script -------------
 
@@ -160,13 +170,9 @@ if __name__ == '__main__':
 
     parser.add_argument( '-c', '--colormode', type=str,
                          default="RGB",
-                         help="RGB vs BGR color sequence. This is network dependent." )
+                         help="RGB vs BGR color sequence. TensorFlow = RGB, Caffe = BGR" )
 
     ARGS = parser.parse_args()
-
-    # Load the labels file
-    labels =[ line.rstrip('\n') for line in
-              open( ARGS.labels ) if line != 'classes\n']
 
     main()
 

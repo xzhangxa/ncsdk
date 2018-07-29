@@ -1,4 +1,4 @@
-# Copyright 2017 Intel Corporation.
+# Copyright 2018 Intel Corporation.
 # The source code, information and material ("Material") contained herein is
 # owned by Intel Corporation or its suppliers or licensors, and title to such
 # Material remains with Intel Corporation or its suppliers or licensors.
@@ -260,9 +260,14 @@ def ssd_metrics(result, expected):
     print_pass = OKGREEN + BOLD + "Pass" + NORMAL
     print_fail = FAIL    + BOLD + "Fail" + NORMAL
 
+    # New compiler uses 4 dims where the old compiler used 3 dim.
+    if(len(result.shape) == 4 or len(expected.shape) == 4):
+        result = np.squeeze(result, 0)
+        expected = np.squeeze(expected, 0)
+
     # Test if we can apply the metric.
     # The supported input shape is: [1, num_predictions, 7]
-    if(len(result.shape) != 3 or len(expected.shape) != 3 
+    if(len(result.shape) != 3 or len(expected.shape) != 3
             or result.shape[0] != 1 or result.shape[2] != 7
             or expected.shape[0] != 1 or expected.shape[2] != 7):
         print(WARNING + "Invalid input for the SSD metric: " +
@@ -275,8 +280,8 @@ def ssd_metrics(result, expected):
     unmatched_tolerance        = 0.02
     out_of_order_tolerance     = 0.10
     multiple_matches_tolerance = 0.10
-    conf_tolerance             = 0.01
-    coord_tolerance            = 0.01
+    conf_tolerance             = 0.10
+    coord_tolerance            = 0.10
 
     # Remove 1st axis it should be one.
     result   = result[0]

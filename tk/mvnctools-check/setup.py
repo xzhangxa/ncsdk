@@ -7,7 +7,7 @@ version = ""
 with open("../../LICENSE", encoding="utf-8") as f:
     license = "\n" + f.read()
 
-for line in open("../../VERSION", encoding="utf-8"):
+for line in open("../version.txt", encoding="utf-8"):
     m = re.search("mvnctools-check[^\w]*?([\d\.]+)", line)
     if m:
         version = m.group(1)

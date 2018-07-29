@@ -1,4 +1,4 @@
-# Copyright 2017 Intel Corporation.
+# Copyright 2018 Intel Corporation.
 # The source code, information and material ("Material") contained herein is
 # owned by Intel Corporation or its suppliers or licensors, and title to such
 # Material remains with Intel Corporation or its suppliers or licensors.
@@ -16,7 +16,6 @@
 
 import sys
 from mvnctools.Models.EnumDeclarations import *
-
 
 def stage_as_label(stage):
     d = {
@@ -62,6 +61,8 @@ def validation_as_enum(string):
         val = ValidationStatistic.class_check_exact
     elif string in ["class-check-broad", "class-accuracy-broad", "class-verification-broad", "class-test-broad"]:
         val = ValidationStatistic.class_check_broad
+    elif string in [ValidationStatistic.ssd_pred_metric.name]:
+        val = ValidationStatistic.ssd_pred_metric
     else:
         val = ValidationStatistic.invalid
 
@@ -114,35 +115,31 @@ def get_class_of_op(op):
     :param op:
     :return:
     """
-    if op in [StageType.convolution, StageType.depthwise_convolution]:
-        return "Convolution"
-    elif op in [StageType.fully_connected_layer]:
-        return "FCL"
-    elif op in [StageType.max_pooling, StageType.average_pooling]:
-        return "Pooling"
-    elif op in [StageType.deconvolution]:
-        return "Deconvolution"
-    elif op in [StageType.reshape]:
-        return "Reshape"
-    elif op in [StageType.permute]:
-        return "Permute"
-    elif op in [StageType.normalize]:
-        return "Normalize"
-    elif op in [StageType.prior_box]:
-        return "PriorBox"
-    elif op in [StageType.detection_output]:
-        return "DetectionOutput"
+
+    class_dict = {
+        StageType.convolution: "Convolution",
+        StageType.depthwise_convolution: "Convolution",
+        StageType.fully_connected_layer: "FCL",
+        StageType.deconvolution: "Deconvolution",
+        StageType.reshape: "Reshape",
+        StageType.permute: "Permute",
+        StageType.normalize: "Normalize",
+        StageType.prior_box: "PriorBox",
+        StageType.detection_output: "DetectionOutput"
+    }
+    if op in class_dict:
+        return class_dict[op]
     else:
-        # print(op)
         return "Unknown"
 
 
 def dtype_size(e):
     """
-    Size in bytes
+    Size in bytes. Used for buffer calculations
     :param e:
     :return:
     """
+
     if e == DataType.fp64:
         return 8
     if e == DataType.fp32:
@@ -167,6 +164,14 @@ def dtype_size(e):
         return 0.25
     if e == DataType.bit:
         return 0.125
+
+def dtype_as_enum(d):
+    if d == np.float16:
+        return DataType.fp16
+    if d == np.float8:
+        return DataType.fp8
+    if d == np.int32:
+        return DataType.int32
 
 
 def enum_as_dtype(e):
@@ -198,23 +203,18 @@ def enum_as_dtype(e):
     if e == DataType.bit:
         return np.bit
 
-def dtype_as_enum(dtype):
-    """
-    Return the enum corresponding to the numpy dtype
-    :param dtype:
-    :return e:
-    """
-    dt_np2enum = {
-            np.dtype('float64') : DataType.fp64,
-            np.dtype('float32') : DataType.fp32,
-            np.dtype('float16') : DataType.fp16,
-            np.dtype('int64') : DataType.int64,
-            np.dtype('int32') : DataType.int32,
-            np.dtype('int16') : DataType.int16,
-            np.dtype('int8') : DataType.int8
-        }
 
-    return dt_np2enum[dtype]
+# Warnings & Errors:
+
+def setup_warnings():
+    """
+    Disables Line numbers being triggered
+    :return:
+    """
+    # Force warnings.warn() to omit the source code line in the message
+    formatwarning_orig = warnings.formatwarning
+    warnings.formatwarning = lambda message, category, filename, lineno, line=None: \
+        formatwarning_orig(message, category, filename, lineno, line='')
 
 def throw_warning(e, extra=None):
     msg = "[Warning: " + str(e.value) + "] "
@@ -224,6 +224,9 @@ def throw_warning(e, extra=None):
         (name, top) = extra
         msg += " Output layer\'s name (" + str(name) + \
             ") must match its top (" + str(top) + ")"
+    if e == ErrorTable.no_check_optimization:
+        msg += "Warning: Optimization file is being used. You must delete the file if undesired."
+
     print("\033[93m" + str(msg) + "\033[0m", file=sys.stderr)
 
 
@@ -308,7 +311,8 @@ def throw_error(e, extra=None):
         msg += "Toolkit Error: Invalid tuple format (" + str(extra) + ")"
     if e == ErrorTable.InvalidMean:
         msg += "Toolkit Error: Invalid mean value (" + str(extra) + ")"
+    if e == ErrorTable.HardwareConfigurationError:
+        msg += "Toolkit Error: Invalid configuration of Hardware. (" + str(extra) + ")"
 
     print("\033[91m" + str(msg) + "\033[0m", file=sys.stderr)
-    quit()
-    assert 0, msg
+    quit(-1)

@@ -32,14 +32,14 @@ ARGS                 = None
 def open_ncs_device():
 
     # Look for enumerated NCS device(s); quit program if none found.
-    devices = mvnc.EnumerateDevices()
+    devices = mvnc.enumerate_devices()
     if len( devices ) == 0:
         print( "No devices found" )
         quit()
 
     # Get a handle to the first enumerated device and open it
     device = mvnc.Device( devices[0] )
-    device.OpenDevice()
+    device.open()
 
     return device
 
@@ -52,9 +52,11 @@ def load_graph( device ):
         blob = f.read()
 
     # Load the graph buffer into the NCS
-    graph = device.AllocateGraph( blob )
+    graph = mvnc.Graph( ARGS.graph )
+    # Set up fifos
+    fifo_in, fifo_out = graph.allocate_with_fifos( device, blob )
 
-    return graph
+    return graph, fifo_in, fifo_out
 
 # ---- Step 3: Pre-process the images ----------------------------------------
 
@@ -75,24 +77,25 @@ def pre_process_image( img_draw ):
 
 # ---- Step 4: Read & print inference results from the NCS -------------------
 
-def infer_image( graph, img ):
+def infer_image( graph, img, fifo_in, fifo_out ):
 
     # Read original image, so we can perform visualization ops on it
     img_draw = skimage.io.imread( ARGS.image )
 
     # The first inference takes an additional ~20ms due to memory 
     # initializations, so we make a 'dummy forward pass'.
-    graph.LoadTensor( img, 'user object' )
-    output, userobj = graph.GetResult()
+    graph.queue_inference_with_fifo_elem( fifo_in, fifo_out, img.astype(np.float32), None )
 
-    # Load the image as a half-precision floating point array
-    graph.LoadTensor( img, 'user object' )
+    output, userobj = fifo_out.read_elem()
+
+    # Load the image as an array
+    graph.queue_inference_with_fifo_elem( fifo_in, fifo_out, img.astype(np.float32), None )
 
     # Get the results from NCS
-    output, userobj = graph.GetResult()
+    output, userobj = fifo_out.read_elem()
 
     # Get execution time
-    inference_time = graph.GetGraphOption( mvnc.GraphOption.TIME_TAKEN )
+    inference_time = graph.get_option( mvnc.GraphOption.RO_TIME_TAKEN )
 
     # Deserialize the output into a python dictionary
     if ARGS.network == 'SSD':
@@ -138,22 +141,25 @@ def infer_image( graph, img ):
 
 # ---- Step 5: Unload the graph and close the device -------------------------
 
-def close_ncs_device( device, graph ):
-    graph.DeallocateGraph()
-    device.CloseDevice()
+def close_ncs_device( device, graph, fifo_in, fifo_out ):
+    fifo_in.destroy()
+    fifo_out.destroy()
+    graph.destroy()
+    device.close()
+    device.destroy()
 
 # ---- Main function (entry point for this script ) --------------------------
 
 def main():
 
     device = open_ncs_device()
-    graph = load_graph( device )
+    graph, fifo_in, fifo_out = load_graph( device )
 
     img_draw = skimage.io.imread( ARGS.image )
     img = pre_process_image( img_draw )
-    infer_image( graph, img )
+    infer_image( graph, img, fifo_in, fifo_out )
 
-    close_ncs_device( device, graph )
+    close_ncs_device( device, graph, fifo_in, fifo_out )
 
 # ---- Define 'main' function as the entry point for this script -------------
 

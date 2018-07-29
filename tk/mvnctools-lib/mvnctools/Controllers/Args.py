@@ -1,8 +1,27 @@
+# Copyright 2018 Intel Corporation.
+# The source code, information and material ("Material") contained herein is
+# owned by Intel Corporation or its suppliers or licensors, and title to such
+# Material remains with Intel Corporation or its suppliers or licensors.
+# The Material contains proprietary information of Intel or its suppliers and
+# licensors. The Material is protected by worldwide copyright laws and treaty
+# provisions.
+# No part of the Material may be used, copied, reproduced, modified, published,
+# uploaded, posted, transmitted, distributed or disclosed in any way without
+# Intel's prior express written permission. No license under any patent,
+# copyright or other intellectual property rights in the Material is granted to
+# or conferred upon you, either expressly, by implication, inducement, estoppel
+# or otherwise.
+# Any license under such intellectual property rights must be express and
+# approved by Intel in writing.
+
 import os
 import argparse
 
 from mvnctools.Controllers.EnumController import *
 from mvnctools.Controllers.MiscIO import *
+from mvnctools.Controllers.PingPong import ppInit
+
+import mvnctools.Controllers.Globals as GLOBALS
 
 
 class FathomArguments:
@@ -28,13 +47,12 @@ class FathomArguments:
             if self.validation_type == ValidationStatistic.invalid:
                 throw_error(ErrorTable.ValidationSelectionError, self.validation_type)
         if self.parser in [Parser.TensorFlow]:
-            if self.image == "None":
-                self.image = None
+            if self.image is None:
                 return
             if self.image is None or not os.path.isfile(self.image):
                 throw_error(ErrorTable.ArgumentErrorImage)
 
-        if self.number_of_shaves < 1 or self.number_of_shaves > 12:
+        if self.number_of_shaves < 0 or self.number_of_shaves > 16:
             throw_error(ErrorTable.InvalidNumberOfShaves)
 
         return
@@ -108,6 +126,9 @@ Fathom makes it easy to profile, tune and optimize your standard TensorFlow or C
                         help='[0] Fathom Operational Mode')
 
     # General Parameters
+    parser.add_argument('--blob_name', metavar='', type=str, nargs='?',
+                        help='Name to be used for the output blob',
+                        default='Fathom.blob', const='Fathom.blob')
     parser.add_argument('--output-name', metavar='', type=str, nargs='?',
                         help='Name to be used for any output files your stage may produce')
     parser.add_argument('--output-location', metavar='', type=str, nargs='?',
@@ -196,15 +217,27 @@ Fathom makes it easy to profile, tune and optimize your standard TensorFlow or C
                         help='Configuration File to use. Default: optimisation.conf')
 
     parser.add_argument('--ma2480', action="store_true",
-                        help="Dev flag to enable MXHWGen")
+                        help="Dev flag")
+    parser.add_argument('--scheduler', metavar='', type=str, nargs='?', action='store', const='',
+                        help="Disable default scheduler and override with scheduler config.")
     parser.add_argument('--save-input', metavar='', type=str, nargs='?', const="InputTensor.bin",
                         default=None, help='Save input tensor to file. Default: InputTensor.bin')
     parser.add_argument('--save-output', metavar='', type=str, nargs='?', const="OutputTensor.bin",
                         default=None, help='Save output tensor to file. Default: OutputTensor.bin')
+    parser.add_argument('--save-weights', metavar='', type=str, nargs='?', const="weights.caffemodel",
+                        default=None, help='Save weights to file. Default: weights.caffemodel')
     parser.add_argument('--channel-swap', type=coords,
                         help="Coordinate", nargs='?')
     parser.add_argument('--input-size', type=int,
                         help="Rescale input image to this size if network does not provide an input size", nargs='?')
+    parser.add_argument('--accuracy_adjust', type=str, const="ALL:256", default="ALL:1", help='Scale the output by this amount', nargs='?')
+
+    parser.add_argument('--new-parser', action="store_true",
+                    help="Run new parser for Caffe")
+    parser.add_argument('--seed', metavar='', type=int, nargs='?',
+                        help="Set a random seed for the input. Debug purposes only")
+
+
 
     # Parse Arguments into variables that we can use.
     try:
@@ -221,9 +254,7 @@ Fathom makes it easy to profile, tune and optimize your standard TensorFlow or C
         print(usage_msg())
         quit()
 
-
     fa = FathomArguments()
-
 
     fa.mode = parse_mode(args.mode)
 
@@ -232,6 +263,7 @@ Fathom makes it easy to profile, tune and optimize your standard TensorFlow or C
     fa.outputs_name = args.output_name if args.output_name is not None else "Fathom"
 
     fa.device_no = args.device_identifier
+    fa.blob_name = args.blob_name
 
     fa.number_of_shaves = int(args.num_shaves) if args.num_shaves is not None else 1
     fa.number_of_iterations = int(args.run_several) if args.run_several is not None else 2
@@ -239,12 +271,12 @@ Fathom makes it easy to profile, tune and optimize your standard TensorFlow or C
     fa.upper_temperature_limit = int(args.tmp_upper_lim) if args.tmp_upper_lim is not None else -1
     fa.lower_temperature_limit = int(args.tmp_lower_lim) if args.tmp_lower_lim is not None else -1
     fa.backoff_time_normal = int(args.backoff_normal) if args.backoff_normal is not None else -1
-    fa.backoff_time_high = int(args.backoff_high)  if args.backoff_high is not None else -1
+    fa.backoff_time_high = int(args.backoff_high) if args.backoff_high is not None else -1
     fa.backoff_time_critical = int(args.backoff_crit) if args.backoff_crit is not None else -1
     fa.debug_readX = int(args.debug_readX) if args.debug_readX is not None else 100
     fa.temperature_mode = "Advanced" if hasattr(args, 'temperature_mode') and args.temperature_mode in [None, "adv", "advanced"] else "Simple"
     fa.stress_usblink_write = int(args.stress_usblink_write) if args.stress_usblink_write is not None else 1
-    fa.stress_usblink_read = int(args.stress_usblink_read)  if args.stress_usblink_read is not None else 1
+    fa.stress_usblink_read = int(args.stress_usblink_read) if args.stress_usblink_read is not None else 1
     fa.stress_full_run = int(args.stress_full_run) if args.stress_full_run is not None else 1
     fa.stress_boot_run = int(args.stress_boot_run) if args.stress_boot_run is not None else 1
     fa.stress_boot_init = int(args.stress_boot_init) if args.stress_boot_init is not None else 1
@@ -255,6 +287,13 @@ Fathom makes it easy to profile, tune and optimize your standard TensorFlow or C
     fa.no_throttling = args.set_no_throttling
     fa.explicit_concat = args.explicit_concat
     fa.ma2480 = args.ma2480
+    fa.scheduler = args.scheduler
+    fa.new_parser = args.new_parser
+    fa.seed = args.seed if args.seed not in [None, -1] else -1
+
+    GLOBALS.USING_MA2480 = args.ma2480
+    GLOBALS.OPT_SCHEDULER = args.scheduler is None
+    ppInit(args.scheduler)
 
     fa.acm = int(args.ACM) if args.ACM is not None else 0
 
@@ -286,6 +325,13 @@ Fathom makes it easy to profile, tune and optimize your standard TensorFlow or C
     fa.conf_file = args.conf_file if args.conf_file is not None else "optimisation.conf"
     fa.save_input = args.save_input
     fa.save_output = args.save_output
+    fa.save_weights = args.save_weights
+    fa.accuracy_table = {}
+    if args.accuracy_adjust != "":
+       pairs = args.accuracy_adjust.split(',')
+       for pair in pairs:
+           layer, value = pair.split(':')
+           fa.accuracy_table[layer] = float(value)
 
     fa.ensure_arg_compatibility()
 

@@ -1,4 +1,4 @@
-# Copyright 2017 Intel Corporation.
+# Copyright 2018 Intel Corporation.
 # The source code, information and material ("Material") contained herein is
 # owned by Intel Corporation or its suppliers or licensors, and title to such
 # Material remains with Intel Corporation or its suppliers or licensors.
@@ -110,7 +110,7 @@ class StageType(Enum):
     myriadX_pooling = 34
     myriadX_fully_connected_layer = 35
     myriadX_post_ops = 36
-    convertHwSw = 37
+    storage_order_convert = 37
     permute = 38
     normalize = 39
     prior_box = 40
@@ -120,30 +120,44 @@ class StageType(Enum):
     max_with_const = 44
     rsqrt = 45
     scale_with_scalar = 46
- 
-    # Unsupported Below this comment
-    dropout = 47
-    maxout = 48
-    normalizaton = 49
-    r_relu = 50
-    BNLL = 51
-    abs = 52
-    stochastic_pooling = 53
+    permute_flatten = 48
+
+    # The following enums have not been officially assigned values
+    dropout         = 993
+    maxout          = 994
+    normalizaton    = 995
+    r_relu          = 996
+    BNLL            = 997
+    abs             = 998
+    stochastic_pooling = 999
 
 
 class StorageOrder(Enum):
     """
-     orderYXZ is our recommended data storage order.
-     Other formats may not be supported yet.
+    Storage order is described as follows:
+    - Increasing changes to the dimension as we move right.
+    e.g. ZYX on a data shape like :
+
+    a a a a
+    a a a a
+    a a a a
+    b b b b
+    b b b b
+    b b b b
+
+    would mean:
+    X = 4
+    Y = 3
+    Z = 2
     """
-    orderXYZ = 0
-    orderXZY = 1
 
-    orderYXZ = 2
-    orderYZX = 3
 
-    orderZYX = 4
-    orderZXY = 5
+    orderYXZ = 0    # Channel Minor
+    orderZYX = 1    # Column Minor (Planar)
+    orderYZX = 2    # Row interleaved
+    orderXYZ = 3    #
+    orderXZY = 4    #
+    orderZXY = 5    #
 
 
 class TapsOrder(Enum):
@@ -169,18 +183,20 @@ class DataType(Enum):
     """
     Data types to be used in mvTensor. Not all supported,
     """
-    fp64 = 0
-    fp32 = 1
-    fp16 = 2
-    fp8 = 3
-    int64 = 4
-    int32 = 5
-    int16 = 6
-    int8 = 7
-    int4 = 8
-    int2 = 9
-    bit = 10
-    chr = 11
+    fp16 = 0
+    fp8 = 1
+    int32 = 2
+
+    # The following Enums have not been official assigned values.
+    fp64    = 3
+    fp32    = 4
+    int64   = 5
+    int16   = 6
+    int8    = 7
+    int4    = 8
+    int2    = 9
+    bit     = 10
+    chr     = 11
 
 
 class ErrorTable(Enum):
@@ -224,6 +240,8 @@ class ErrorTable(Enum):
     InvalidNpyFile = 38
     InvalidTuple = 39
     InvalidMean = 40
+    HardwareConfigurationError = 41
+    no_check_optimization = 42
 
 
 class Parser(Enum):
@@ -235,3 +253,13 @@ class Parser(Enum):
     Torch = 2
     Theano = 3
     Debug = 4
+
+
+class SeedData(Enum):
+    """
+    Values to represent what placeholder values should be used.
+    """
+    all_zeros = 0
+    all_ones = 1
+    random = 2
+    random_int = 3

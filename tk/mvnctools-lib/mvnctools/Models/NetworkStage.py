@@ -1,4 +1,4 @@
-# Copyright 2017 Intel Corporation.
+# Copyright 2018 Intel Corporation.
 # The source code, information and material ("Material") contained herein is
 # owned by Intel Corporation or its suppliers or licensors, and title to such
 # Material remains with Intel Corporation or its suppliers or licensors.
@@ -21,8 +21,19 @@ from mvnctools.Controllers.DataTransforms import *
 from mvnctools.Controllers.EnumController import *
 from mvnctools.Models.EnumDeclarations import *
 from mvnctools.Views.Graphs import *
+from mvnctools.Controllers.CnnHardware import *
 
 from linecache import getline
+
+import mvnctools.Controllers.Globals as GLOBALS
+
+from mvnctools.Models.StageDefinitions.OpManager import get_op_definition
+
+from mvnctools.Controllers.PingPong import getManualHwSchedule, get_null_terminating_name
+import mvnctools.Controllers.Globals as GLOBALS
+
+search_list = []
+
 
 class NetworkStage:
 
@@ -57,15 +68,17 @@ class NetworkStage:
             post_sy,
             slicing=None,
             myriad_config=None,
-            args=None,
+            args=None,          # Currently Not Optional.
             opParams=None,
             new_x=0,
             new_y=0,
-            new_c=0):
+            new_c=0,
+            network=None,        # If we do not have args, use this.
+        ):
         self.changeName(name)
 
         # Historically cocat layer was working only for axis1 i.e channels.
-        # Concat on axis 2 is available only for CaffeParser and concat_axis 
+        # Concat on axis 2 is available only for CaffeParser and concat_axis
         # needs to default to 1 in order not to break the TensorFlowParser.
         self.concat_axis = 1
 
@@ -74,7 +87,27 @@ class NetworkStage:
                 and x == 1 and y == 1):
             op_type = StageType.fully_connected_layer
 
-        self.network = args.network
+        self.definition = get_op_definition(op_type)
+
+        # Make sure that the first conv olution layer is padded
+        if GLOBALS.USING_MA2480 and \
+            top == None and \
+            op_type in [StageType.convolution] and \
+            c == 3 and \
+            taps.shape[1] == 3:
+            padded_weights_slice = np.zeros([taps.shape[0], 1, taps.shape[2], taps.shape[3]])
+            taps = np.append(taps, padded_weights_slice, axis=1)
+            PadMXWeights = True
+        else:
+            PadMXWeights = False
+
+        if args is not None:
+            self.network = args.network
+        elif network is not None:
+            self.network = network
+        else:
+            print("No Network Passed to Network Stage")
+            quit()
         self.top = top
         self.tail = []
         self.op = op_type
@@ -116,31 +149,43 @@ class NetworkStage:
                 StageType.eltwise_prod or op_type == StageType.eltwise_max):
             # Ignore given k, which could be wrong if it ignored slicing
             k = c
+
         self.inputDimX = x
         self.inputDimY = y
         self.inputDimZ = c
 
-        self.tapDimX = fw * fh
-        self.tapDimY = c
-        self.tapDimZ = k  # Will be replaced when attached to another stage..
+
+        if PadMXWeights:
+            c = 4
+
+        if fw or fh or c or k:
+            # TODO: Confirm that the current Op has taps before doing this...
+            self.tapDimX = fw * fh
+            self.tapDimY = c
+            self.tapDimZ = k
+        else:
+            self.tapDimX = 0
+            self.tapDimY = 0
+            self.tapDimZ = 0
+
+        if PadMXWeights:
+            c = 3
 
         self.outputDimZ = k
         if self.op in [StageType.fully_connected_layer]:
-            if self.inputDimX == 0:
-                #Flag that we don't want to flatten the input 2D matrix
-                self.inputDimX = 1
-                self.outputDimX = 1
-                self.outputDimY = self.inputDimY
-            else:
-                self.inputDimX = 1
-                self.inputDimY = 1
-                self.inputDimZ = x * y * c
+            self.inputDimX = 1
+            self.inputDimY = 1
+            self.inputDimZ = x * y * c
 
-                self.tapDimX = 1
-                self.tapDimY = x * y * c
+            if PadMXWeights:
+                c = 4
+            self.tapDimX = 1
+            self.tapDimY = x * y * c
+            if PadMXWeights:
+                c = 3
 
-                self.outputDimX = 1
-                self.outputDimY = 1
+            self.outputDimX = 1
+            self.outputDimY = 1
 
         elif self.op in [StageType.convolution, StageType.depthwise_convolution, StageType.max_pooling, StageType.average_pooling]:
             if pad_type == PadStyle.tfsame:
@@ -235,7 +280,13 @@ class NetworkStage:
             self.outputDimX = new_x
             self.outputDimY = new_y
             self.outputDimZ = new_c
-        elif self.op in [StageType.prior_box] :
+
+        elif self.op in [StageType.storage_order_convert]:
+            # The following lines are included for compatibility with the rest of the initialization function only.
+            self.outputDimX = x
+            self.outputDimY = y
+
+        elif self.op in [StageType.prior_box]:
             self.tapDimX = int(opParams[1])
             self.tapDimY = int(opParams[0])
 
@@ -298,9 +349,13 @@ class NetworkStage:
         self.tapsPointer = 0  # We will fill them in generate
         self.tapsIndex = 0
         self.tapsOrder = taps_order
+
         self.bias = bias
         self.biasPointer = 0  # We will fill them in generate
         self.biasIndex = 0
+        self.scale = None
+        self.scalePointer = 0
+        self.scaleIndex = 0
         self.opParams = opParams
         self.opParamsPointer = 0  # We will fill them in generate
         self.opParamsIndex = 0
@@ -332,7 +387,8 @@ class NetworkStage:
             if (self.op in [StageType.convolution,
                             StageType.depthwise_convolution,
                             StageType.fully_connected_layer,
-                            StageType.scale]) and bias is not None:
+                            StageType.scale,
+                            StageType.deconvolution]) and bias is not None:
                 self.postOp = StageType.bias
             else:
                 self.postOp = StageType.none
@@ -347,12 +403,36 @@ class NetworkStage:
             self.outputDimY = new_y
             self.outputDimZ = new_c
 
+        if self.op in [StageType.eltwise_max, StageType.eltwise_sum, StageType.eltwise_prod]:
+            self.tapLayout = self.definition.requirements["input"]["layout"]
+            self.tapDimX = self.inputDimX
+            self.tapDimY = self.inputDimY
+            self.tapDimZ = self.inputDimZ
+            self.recalculate_stride("taps")
+
+        # Accuracy parameters
+        default_scale = 256.0
+        if hasattr(args, "accuracy_table"):
+            if "ALL" in args.accuracy_table:
+                self.accuracy_scale = args.accuracy_table["ALL"]
+            elif name in  args.accuracy_table:
+                self.accuracy_scale = args.accuracy_table[name]
+            else:
+                self.accuracy_scale = 256.0
+        else:
+            self.accuracy_scale = 256.0
+
         # Only to be used after myriad execution
         self.flops = None
         self.ms = None
         self.BWs = None
         self.isoutput = False
         self.isconcat = False
+
+        self.pre_definition = get_op_definition(self.preOp)
+        self.post_definition = get_op_definition(self.postOp)
+
+        self.outputLayout = StorageOrder.orderYXZ
 
     def addBias(self, bias):
         if bias is not None:
@@ -362,27 +442,36 @@ class NetworkStage:
             else:
                 self.bias = self.bias + bias
 
-
     def putBias(self):
         if self.bias is not None:
             self.biasPointer, self.biasBufferIndex = get_buffer(
                 self.bias.astype(np.float16), self.datatype)
             self.biasIndex = MemoryIndex.blob.value
 
+    def putScale(self, scale):
+        if scale is not None:
+            if self.scale is None:
+                self.scale = scale
+                self.scalePointer, self.scaleBufferIndex = get_buffer(
+                    self.scale.astype(np.float16), self.datatype)
+                self.scaleIndex = MemoryIndex.blob.value
+            else:
+                # There was a scale added from another operation, need to multiply values
+                self.scale = self.scale * scale
+
+
     def putTaps(self):
         if self.taps is not None:
             self.tapsPointer, self.tapsBufferIndex = get_buffer(
-                self.taps.astype(np.float16), self.datatype)
+                self.taps.astype(np.float16), self.datatype, hwAlignment=True, op=self.op, tapsOrder=self.tapsOrder)
             self.tapsIndex = MemoryIndex.blob.value
-            if self.op == StageType.copy:   #In copy we are using taps as input
-                self.dataPointer = self.tapsPointer
-                self.dataIndex = self.tapsIndex
 
     def putOpParams(self):
         """ Puts the operation parameters in the blob buffer """
         if self.opParams is not None:
             self.opParamsPointer, self.opParamsBufferIndex = \
-                get_buffer(self.opParams, dtype_as_enum(self.opParams.dtype))
+                get_buffer(self.opParams, DataType.fp32)
+
             self.opParamsIndex = MemoryIndex.blob.value
 
     def changeName(self, new_name):
@@ -423,8 +512,12 @@ class NetworkStage:
             stage.inputStrideX = self.inputStrideX
             stage.inputStrideY = self.inputStrideY
             stage.inputStrideZ = self.inputStrideZ
-            stage.tapDimX = self.tapDimX
-            stage.tapDimY = self.tapDimY
+            if stage.supports_taps():
+                stage.tapDimX = self.tapDimX
+                stage.tapDimY = self.tapDimY
+            else:
+                stage.tapDimX = 0
+                stage.tapDimY = 0
             stage.radixX = self.radixX
             stage.radixY = self.radixY
             stage.strideX = self.strideX
@@ -451,6 +544,84 @@ class NetworkStage:
                     parents.tail = newtail
             return
 
+        def is_fused(stage):
+            # Disable convolution/pooling fusion when not possible
+            input = (stage.inputDimX, stage.inputDimY, stage.inputDimZ)
+            output = (stage.outputDimX, stage.outputDimY, stage.outputDimZ)
+            kernel = (stage.radixX, stage.radixY)
+
+            if not canFusePooling(input, output, kernel):
+                return True
+            try:
+                return stage.fused_conv_pooling
+            except AttributeError:
+                return False
+
+
+        if GLOBALS.USING_MA2480 and \
+           (stage.op == StageType.max_pooling or stage.op == StageType.average_pooling) and \
+           (self.op == StageType.convolution) and \
+            stage.radixX == 2 and stage.radixY == 2 and \
+            stage.strideX == 2 and stage.strideY == 2 and \
+            not is_fused(self):
+            #(self.inputDimX * self.inputDimY / 1024 > 128) and \
+            print("Caught non-overlapping pooling after convolution")
+
+            # self.outputDimX = stage.outputDimX
+            # self.outputDimY = stage.outputDimY
+            # self.outputDimZ = stage.outputDimZ
+
+            # stage.op = StageType.none
+
+            stage.fused_conv_pooling = True
+            stage.fused_op = stage.op
+            stage.fused_poolingRadixX = stage.radixX
+            stage.fused_poolingRadixY = stage.radixY
+            stage.op = StageType.convolution
+            stage.taps = self.taps
+            stage.inputDimX = self.inputDimX
+            stage.inputDimY = self.inputDimY
+            stage.inputDimZ = self.inputDimZ
+            stage.inputStrideX = self.inputStrideX
+            stage.inputStrideY = self.inputStrideY
+            stage.inputStrideZ = self.inputStrideZ
+            stage.tapDimX = self.tapDimX
+            stage.tapDimY = self.tapDimY
+            stage.radixX = self.radixX
+            stage.radixY = self.radixY
+            stage.strideX = self.strideX
+            stage.strideY = self.strideY
+            stage.padX = self.padX
+            stage.padY = self.padY
+            stage.padStyle = self.padStyle
+            stage.top = self.top
+            stage.data = self.data
+            stage.dataIndex = self.dataIndex
+            stage.dataPointer = self.dataPointer
+            stage.postOp = self.postOp
+
+            stage.post_param1 = self.post_param1
+            stage.bias = self.bias
+
+            #Remove self from network and change references
+            self.network.count = self.network.count - 1
+            self.network.stageslist.remove(self)
+            stage.top = self.top
+            if self in self.network.head:
+                stage.network.storageOrder = stage.storageOrder
+                self.network.head.remove(self)
+                self.network.head.append(stage)
+            else:
+                for parents in self.network.search_several(self.top):
+                    newtail = []
+                    for p in parents.tail:
+                        if p == self:
+                            newtail.append(stage)
+                    parents.tail = newtail
+
+            return
+
+
         # This line is to build a correct graph after renaming due to absorption
         # When scale or batchnorm is absorbed into convolution, its name is appended
         # to the name of the convolution layer, so bottoms (here they are called tops,
@@ -471,7 +642,8 @@ class NetworkStage:
         if (stage.op != StageType.fully_connected_layer and not self.isconcat
                 and self.op != StageType.reshape):
             stage.inputDimX, stage.inputDimY, stage.inputDimZ = self.outputDimX, self.outputDimY, self.outputDimZ
-            stage.tapDimY = self.outputDimZ
+            if stage.supports_taps():
+                stage.tapDimY = self.outputDimZ
         if stage.op in [StageType.max_pooling]:
             stage.output = np.zeros(
                 (stage.outputDimZ, stage.outputDimY, stage.outputDimX))
@@ -512,7 +684,11 @@ class NetworkStage:
             x = int(stages[0].outputDimX)
             y = int(stages[0].outputDimY)
 
-            concat_size = (y, x, z)
+            def roundup8(x):
+                return ((x + 7) // 8) * 8
+
+            #concat_size = (y, x, z)
+            concat_size = (y, roundup8(x), z)
 
             dtype = stages[0].datatype
             if lastlayer:
@@ -521,7 +697,9 @@ class NetworkStage:
                 buffer = 0
                 buffer_index = MemoryIndex.output.value
             elif stages[0].outputPointer == 0 and stages[0].outputIndex == MemoryIndex.none.value:
-                buffer, buffer_index = get_zero_buffer(np.zeros(concat_size).astype(enum_as_dtype(dtype)), dtype)
+                buffer, buffer_index = get_zero_buffer(
+                    np.zeros(concat_size).astype(
+                        enum_as_dtype(dtype)), dtype)
             else:
                 buffer = stages[0].outputPointer
                 buffer_index = stages[0].outputIndex
@@ -532,15 +710,48 @@ class NetworkStage:
                 offset_pointer = buffer
 
                 if(stage.outputPointer == 0):
-                    stage.outputPointer = offset_pointer + concat_offset*2  # TODO: REMOVE HARDCODED 2 For FP16 Size
-
+                    stage.outputPointer = offset_pointer + concat_offset * 2
                 stage.outputIndex = buffer_index
 
                 stage.concatResult = True
-                concat_offset += int(stage.outputDimZ)
 
-                stage.outputStrideX = z*2
-                stage.outputStrideY = z*2*stage.outputDimX
+                pingPongPair = getManualHwSchedule()
+
+                #The following assumtions are made, here, about the decisions taken
+                #later in the compilation process:
+                #1. In the current concat layer all the input tensors come from
+                #   either HW layers only or SW layers only. Mixing outputs of HW and
+                #   SW layers is not supported.
+                #2. Storage order of concatenated outputs is the same.
+                #3. When a network is compiled for hardware the following layer types
+                #   are always going to be run on HW: StageType.convolution,
+                #   StageType.max_pooling, StageType.average_pooling.
+                #4. When a network is compiled for hardware all other layers types
+                #   not included in the list at point 3 are software layers that
+                #   output in channel minor format i.e. YXZ storage order.
+
+                if GLOBALS.USING_MA2480 and stage.op in [StageType.convolution,
+                    StageType.max_pooling, StageType.average_pooling]:
+                    # DimX: Width, DimY: Height, DimZ: Depth
+                    if pingPongPair[get_null_terminating_name(stage.name)][1][1] == 'I' or GLOBALS.OPT_SCHEDULER:
+                        concat_offset += int(stage.outputDimZ * roundup8(stage.outputDimX))
+                    else:
+                        concat_offset += int(stage.outputDimZ * stage.outputDimY * roundup8(stage.outputDimX))
+
+                else:
+                    # Code for concat in channel minor
+                    concat_offset += int(stage.outputDimZ)
+
+                # This creates a new attribute to the stage class, which (if detected by CnnHardware.py)
+                # appropriately does the concat in interleaved mode
+                stage.totalOutChans = z
+                stage.concatBufferOffset = stage.outputPointer - offset_pointer
+                stage.concatOutputSize = np.prod(concat_size) * 2 # In bytes
+                # print("######stage.concatBufferOffset =", stage.outputPointer - offset_pointer)
+                # print("######stage.concatOutputSize =", stage.concatOutputSize)
+
+                stage.outputStrideX = z * 2
+                stage.outputStrideY = z * 2 * stage.outputDimX
                 stage.tapStrideY = stage.outputDimZ * 2
         elif stages[0].concat_axis == 2:
 
@@ -580,10 +791,10 @@ class NetworkStage:
             # fails and this is a hack not propper code.
             raise Exception("Concat on axis {0} not implemented".format(stages[0].concat_axis))
 
+
     def attach_eltwise(self, parents):
         # Attach two parents to this elementwise operations layer
         # The second layer will be put in the weights pointer
-
 
         if hasattr(parents[0], '__iter__'):
             NetworkStage.concat(parents[0], False)
@@ -600,7 +811,11 @@ class NetworkStage:
             self.dataIndex = parents[0].outputIndex
             self.tapsPointer = 0
             self.tapsIndex = MemoryIndex.input.value
+            self.tapLayout = self.definition.requirements["input"]["layout"]
+            self.recalculate_stride("taps")
+
             parents[0].tail.append(self)
+
         else:
             if hasattr(parents[1], '__iter__'):
                 NetworkStage.concat(parents[1], False)
@@ -618,6 +833,9 @@ class NetworkStage:
             self.dataIndex = parents[0].outputIndex
             self.tapsPointer = parents[1].outputPointer
             self.tapsIndex = parents[1].outputIndex
+            self.tapLayout = self.definition.requirements["input"]["layout"]
+            self.recalculate_stride("taps")
+
             parents[1].tail.append(self)
         return
 
@@ -689,6 +907,15 @@ class NetworkStage:
             parents.attach(self)
             return
 
+        # The 'tail' list of a node is built such that when there is a child with
+        # multiple parentnodes (e.g: concat, etlwise), only the last parent has the
+        # child added to the 'tail' list. However, for the automatic scheduler to
+        # correctly build the subgraphs, all parent-child relations need to be added to
+        # the 'tail' list
+        if GLOBALS.USING_MA2480:
+            for l in parents:
+                l.tail.append(self)
+
         # Next three lines are to build a correct graph after renaming due to
         # absorption, see attach
         self.top = []
@@ -697,7 +924,8 @@ class NetworkStage:
 
         NetworkStage.concat(parents, False)
         z = sum([int(p.unprocessed_k) for p in parents])
-        parents[len(parents) - 1].tail.append(self)
+        if not GLOBALS.USING_MA2480:
+            parents[len(parents) - 1].tail.append(self)
         self.inputDimZ = z
         self.inputStrideX = z * 2
 
@@ -705,7 +933,8 @@ class NetworkStage:
             parents[0].outputPointer      # Input Pointer
         self.dataIndex = parents[0].outputIndex
 
-        self.tapDimY = z
+        if self.supports_taps():
+            self.tapDimY = z
 
         if self.op in [StageType.max_pooling]:
             self.outputDimZ = self.inputDimZ
@@ -713,117 +942,60 @@ class NetworkStage:
 
     def search(self, seek_name):
         """
+        Initalizes a search. Uses the global 'search_list' to make sure we don't recurse
+        down paths we have already searched.
+        Clears before each call.
+        """
+        global search_list
+        search_list = []
+        return self.search_recurse(seek_name, [])
+
+    def search_recurse(self, seek_name, _searched):
+        """
         return: 0 if not found. The searched node if found.
         :param seek_name: name of node we're looking for
+        :param _searched: private param for avoiding already searched nodes.
         """
-        if self.name == seek_name or self.unprocessed_name == seek_name or seek_name in self.alias:
-            return self
+        global search_list
+
+        if self in search_list:
+            # We already searched here to no avail. Return
+            return 0
+
+        if search_list == []:
+            # Only if there is one node, otherwise, the children check will find the result first.
+            if self.name == seek_name or self.unprocessed_name == seek_name or seek_name in self.alias:
+                return self
 
         for t in self.tail:
             if t.name == seek_name or t.unprocessed_name == seek_name or seek_name in t.alias:
-                return t                                # Search item == current item
+                search_list += [t]
+                return t
             else:
                 # Not found, traverse deeper
-                recursive_result = t.search(seek_name)
+                recursive_result = t.search_recurse(seek_name, _searched)
+
                 if (recursive_result != 0 and recursive_result.name == seek_name) or \
-                        (recursive_result != 0 and recursive_result.unprocessed_name == seek_name) or \
-                        (recursive_result != 0 and seek_name in recursive_result.alias):
+                    (recursive_result != 0 and recursive_result.unprocessed_name == seek_name) or \
+                    (recursive_result != 0 and seek_name in recursive_result.alias):
                     # Found in one of the tree nodes, bubble up.
+                    search_list += [t]
                     return recursive_result
+                else:
+                    # Children were searched to no avail.
+                    search_list += [t]
+
+        search_list += [self]
         return 0  # Not found, backtrack
 
-    def set_blob_vars(self):
+    def supports_taps(self):
         """
-         Builds the layout of the network stage for use in the blobfile.
-         Currently undergoing refactoring so that ctypes are only applied here.
-         :return:
+        Checks if the layer has taps, and that they are not empty.
         """
-        self.write_items = [
-            self.name,
-            c_char(self.op.value),
-            c_uint32(self.optMask),
-            c_int8(self.radixX),
-            c_int8(self.radixY),
-            c_uint8(self.strideX),
-            c_uint8(self.strideY),
-            c_uint8(self.padX),
-            c_uint8(self.padY),
-            c_uint8(self.padStyle.value),
-            c_uint32(self.inputDimX),
-            c_uint32(self.inputDimY),
-            c_uint32(self.inputDimZ),
-            c_uint32(self.tapDimX),
-            c_uint32(self.tapDimY),
-            c_uint32(self.tapDimZ),
-            c_uint32(self.outputDimX),
-            c_uint32(self.outputDimY),
-            c_uint32(self.outputDimZ),
-            c_uint32(self.inputStrideX),
-            c_uint32(self.inputStrideY),
-            c_uint32(self.inputStrideZ),
-            c_uint32(self.tapStrideX),
-            c_uint32(self.tapStrideY),
-            c_uint32(self.tapStrideZ),
-            c_uint32(self.outputStrideX),
-            c_uint32(self.outputStrideY),
-            c_uint32(self.outputStrideZ),
-            c_uint8(self.datatype.value),
-            c_uint8(self.precision.value),
-            c_uint8(self.storageOrder.value),
-            c_uint32(self.dataPointer),
-            c_uint16(self.dataIndex),
-            c_uint32(self.tapsPointer),
-            c_uint16(self.tapsIndex),
-            c_uint32(self.biasPointer),
-            c_uint16(self.biasIndex),
-            c_uint32(self.opParamsPointer),
-            c_uint16(self.opParamsIndex),
-            c_uint32(self.outputPointer),
-            c_uint16(self.outputIndex),
-            c_uint8(self.preOp.value),
-            c_uint8(self.postOp.value),
-            c_float(self.post_param1) if isinstance(self.post_param1, float) else c_int32(self.post_param1),
-            c_ushort(self.post_strideX),
-            c_ushort(self.post_strideY)
-        ]
-
-        for t in self.tail:
-            t.set_blob_vars()
-
-    def generate(self, f):
-        """
-        Writes this object (Layer description) to provided file.
-
-        :param f: open file handler
-        :return: byte_size # TODO: Unverified. Compare with binary_size output.
-        """
-
-        # We can probably make this smarter with this:
-        # http://stackoverflow.com/questions/11296010/iterate-through-class-members-in-order-of-their-declaration
-
-        sz = 0
-        for item in self.write_items:
-            f.write(item)
-            sz += byte_size(item)
-
-        # Don't recurse, we have a list of all the stages
-        # for t in self.tail:
-        #    sz += t.generate(f)
-
-        return sz
-
-    def binary_size(self):
-        """
-        Get byte size of structure when written to blob file
-        Doesn't count our data arrays (we only want the pointers to that data on Myriad)
-        :return: total size that will be written to blob file for this stage.
-        """
-
-        file_sizes = [
-            byte_size(t) for t in self.write_items if isinstance(
-                t, ctypes._SimpleCData) or isinstance(
-                t, bytes)]
-        return sum(file_sizes)
+        if hasattr(self, "taps") and self.taps is not None:
+            return True
+        else:
+            return False
 
     def debug(self, to_file=False, f=None):
         """
@@ -832,27 +1004,53 @@ class NetworkStage:
         :param f: The corresponding filename if to_file is True
         :return: Nothing
         """
-        if to_file:
-            pass
-        else:
-            pass
 
         for t in self.tail:
             t.debug(to_file, f)
 
     def finalize(self):
+        """
+        This 'pass' of the compiler computes final editions of the buffers.
+        They will be used in the serialization phase.
+
+        Note: Not a clean function, there are potential undocumented effects.
+        """
         # Taps (and maybe bias) can be modified by batch normalization layer
         # that follows, so add them at the end
         self.putTaps()
         self.putBias()
         self.putOpParams()
 
+        # This flag must be set so that we do not traverse a layer multiple times,
+        # potentially creating multiple versions of buffers & other bad side-effects.
+        self.isFinalized = True
+
+        def get_null_terminating_name(x):
+            """Input is a bytes class"""
+            return (x.split(b'\0', 1)[0]).decode('utf-8')
+
+        # Altering the taps of the convolution after concat
+        if get_null_terminating_name(self.name) == 'just_make_concat_not_be_last':
+            print(self.taps.shape)
+          # Iterate over the first dimension of the 4D taps, ie. iterate over the
+          # taps themselves.
+            index = 0
+
+            for tap in self.taps:
+                tap.fill(0.0)
+                tap[index, :, :] = 1.0
+                index += 1
+
         for t in self.tail:
-            t.finalize()
+            if not hasattr(t, "isFinalized"):
+                t.finalize()
 
     def check_algo(self, network):
         # Check if two layers write to the same output and one of them is convolution
         # Force im2col_v2 in this case, where it's normally never used
+
+        self.algo_checked = True
+
         if self.op == StageType.convolution and self.inputDimZ >= 200:
             if network.writes_output(self, self.outputIndex):
                 if self.optMask & 0x80000000 == 0x80000000:
@@ -862,13 +1060,16 @@ class NetworkStage:
                         self.unprocessed_name,
                         ' forced to im2col_v2, because its output is used in concat')
         for t in self.tail:
-            t.check_algo(network)
+            if not hasattr(t, "algo_checked"):
+                t.check_algo(network)
 
     def writes_output(self, exclude_layer, index):
         # Return True if this or a tail layer uses index as input
+        self.output_written = True
         for t in self.tail:
-            if t.writes_output(exclude_layer, index):
-                return True
+            if not hasattr(t,"output_written"):
+                if t.writes_output(exclude_layer, index):
+                    return True
         if self != exclude_layer and self.outputIndex == index:
             return True
         return False
@@ -877,6 +1078,8 @@ class NetworkStage:
         sizes = []
         offsets = []
         names = []
+
+        self.assign_remnant_done = True
 
         if self.top is not None and isinstance(self.top[0], str):
             # This should ensure that the input strides are correct after
@@ -895,11 +1098,13 @@ class NetworkStage:
             names.append(self.name)
             self.isoutput = True
         elif self.outputPointer == 0 and self.outputIndex == MemoryIndex.none.value and len(self.top) > 1 and get_class_of_op(self.op) == "Pooling":
-            node = net.head[0].search(self.top[0])
-            self.output = np.zeros(
-                (node.outputDimZ,
-                 node.outputDimY,
-                 node.outputDimX)).astype(np.float16)
+            self.output = np.zeros(self.output.shape).astype(np.float16)
+            # This code was breaking when ending with a Pool:
+            # node = net.head[0].search(self.top[0])
+            # self.output = np.zeros(
+            #     (node.outputDimZ,
+            #      node.outputDimY,
+            #      node.outputDimX)).astype(np.float16)
             self.outputIndex = MemoryIndex.output.value
             sizes.append(self.output.shape)
             offsets.append(self.outputPointer)
@@ -907,10 +1112,11 @@ class NetworkStage:
             self.isoutput = True
 
         for t in self.tail:
-            t_res = t.assign_remnant_buffers(net)
-            sizes.extend(t_res[0])
-            offsets.extend(t_res[1])
-            names.extend(t_res[2])
+            if not hasattr(t,"assign_remnant_done"):
+                t_res = t.assign_remnant_buffers(net)
+                sizes.extend(t_res[0])
+                offsets.extend(t_res[1])
+                names.extend(t_res[2])
         return sizes, offsets, names
 
     def convert_inputs_outputs_to_yxz(self, recurse, debug=False):
@@ -922,6 +1128,9 @@ class NetworkStage:
         :param debug: Set to true to enable debug print messages
         :return: Nothing. Side effect of transformed buffers.
         """
+
+        self.io_was_converted = True
+
         if self.storageOrder == StorageOrder.orderYXZ:
             if debug:
                 print("Already in this form")
@@ -939,6 +1148,7 @@ class NetworkStage:
                         self.output, self.datatype).astype(
                         dtype=np.float16)
                     self.storageOrder = StorageOrder.orderYXZ
+
 
         elif self.storageOrder == StorageOrder.orderXYZ:
             if len(self.data.shape) == 4:
@@ -958,22 +1168,22 @@ class NetworkStage:
                 ErrorTable.ConversionNotSupported,
                 self.storageOrder.name)
 
-        if 0:
-            self.data.tofile('InputTensor.bin')
-
         if recurse:
             for node in self.tail:
-                node.convert_inputs_outputs_to_yxz(recurse)
+                if not hasattr(node, "io_was_converted"):
+                    node.convert_inputs_outputs_to_yxz(recurse)
 
     def convert_taps_to_hwck(self, recurse):
+        self.taps_were_converted = True
+
         if self.tapsOrder != TapsOrder.orderHWCK:
-            if get_class_of_op(
-                    self.op) in [
+            if get_class_of_op(self.op) in [
                     "Convolution",
                     "FCL",
                     "Deconvolution"]:
                 if self.op in [StageType.fully_connected_layer]:
                     if self.unprocessed_h > 1 or self.unprocessed_w > 1:
+
                         self.taps = self.taps.reshape(
                             self.unprocessed_k,
                             self.unprocessed_c,
@@ -982,8 +1192,12 @@ class NetworkStage:
                     else:
                         self.taps = self.taps.reshape(
                             self.taps.shape[0], self.taps.shape[1], 1, 1)
+
+                taps_shape = self.taps.shape
                 self.taps = kchw_to_hwck(self.taps)
-                replace_buffer(self.taps, self.tapsBufferIndex, self.datatype)
+                self.tapsOrder = TapsOrder.orderHWCK
+                replace_buffer(self.taps, self.tapsBufferIndex, self.datatype,
+                    hwAlignment=True, originalShape=taps_shape, op=self.op, tapsOrder=self.tapsOrder)
             else:
                 if (self.taps is None or
                         get_class_of_op(self.op) == "FCL" or
@@ -996,9 +1210,13 @@ class NetworkStage:
                         self.op.name)
 
             self.storageOrder = StorageOrder.orderYXZ.value
+
+
         if recurse:
             for node in self.tail:
-                node.convert_taps_to_hwck(recurse)
+                if not hasattr(node, "taps_were_converted"):
+                    node.convert_taps_to_hwck(recurse)
+
 
     def getBWs(self):
         in_dim = self.data.flatten().shape[0]
@@ -1041,13 +1259,15 @@ class NetworkStage:
         return (arrays * 2)
 
     def minmax(self, attr, min, max):
+        self.gotMinMax = True
         if min > getattr(self, attr):
             min = getattr(self, attr)
         if max < getattr(self, attr):
             max = getattr(self, attr)
 
         for t in self.tail:
-            min, max = t.minmax(attr, min, max)
+            if not hasattr(t, "gotMinMax"):
+                min, max = t.minmax(attr, min, max)
 
         return min, max
 
@@ -1063,22 +1283,22 @@ class NetworkStage:
 
         """
         flops = 0
-        if self.op == StageType.convolution:
+        if self.op in [StageType.convolution, StageType.myriadX_convolution]:
             # Output channels too.
             flops = self.unprocessed_k * self.outputDimX * self.outputDimY * \
                 self.inputDimZ * self.radixX * self.radixY * 2
 
-        elif self.op == StageType.max_pooling:
+        elif self.op in [StageType.max_pooling, StageType.myriadX_pooling]:
             flops = self.unprocessed_k * self.outputDimX * \
                 self.outputDimY * self.radixX * self.radixY
 
-        elif self.op == StageType.average_pooling:
+        elif self.op in [StageType.average_pooling, StageType.myriadX_pooling]:
             flops = self.unprocessed_k * self.outputDimX * \
                 self.outputDimY * self.radixX * self.radixY * 2
 
-        elif self.op == StageType.fully_connected_layer:
+        elif self.op in [StageType.fully_connected_layer, StageType.myriadX_fully_connected_layer]:
             in_dim = self.data.flatten().shape[0]
-            out_channels = self.output.flatten().shape[0]
+            out_channels = self.output.shape[0]
             flops = in_dim * out_channels * 2
 
         elif self.op == StageType.depthwise_convolution:
@@ -1091,36 +1311,430 @@ class NetworkStage:
 
         return flops / 1000000
 
+    def adjust_accuracy(self, scheduler):
+        if self.op in [StageType.fully_connected_layer, StageType.convolution, StageType.depthwise_convolution]:
+            # To adjust for accuracy multiply the weights by scale, and
+            # do post-accumulate multiply by 1/scale.
+            if self.accuracy_scale != 1.0:
+                # print("adjusting weights for: ", get_null_terminating_name(self.name))
+                adjustment_factor = 1.0 / self.accuracy_scale
+                scale_vector = np.full(self.outputDimZ, adjustment_factor).astype(np.float16)
+                self.putScale(scale_vector)
+                if self.taps is not None:
+                    self.taps = self.taps * self.accuracy_scale
+                if self.bias is not None:
+                    self.bias = self.bias * self.accuracy_scale
+
+    def convert_for_hardware(self, scheduler):
+        print("Hardwareize One")
+        if self.op in [StageType.fully_connected_layer, StageType.convolution, StageType.max_pooling, StageType.average_pooling]:
+
+            self.hardware_solution = hardwareize(self, scheduler)
+
+            input_stride, output_stride, newDimZ, BufSize, hwDescList, taps, bias, scale = self.hardware_solution
+
+            # Write Adjusted Weights
+            self.taps = taps
+            if self.taps is not None:
+                self.taps = replace_buffer(self.taps, self.tapsBufferIndex,  self.datatype,
+                    hwAlignment=False, op=self.op, tapsOrder=self.tapsOrder)
+
+            # Hardware may rearrange the taps, if split over the input is activated
+            if bias is not None:
+                self.bias = replace_buffer(bias, self.biasBufferIndex,  self.datatype)
+            if scale is not None:
+                self.scale = replace_buffer(scale, self.scaleBufferIndex, self.datatype)
+        # Only for a sequential layout
+
+    def recalculate_stride(self, where, myriadX=False, concat=[0,0,0]):
+        """
+        Recalculates Strides for a buffer.
+        @where - A string indicating which NetworkStage buffer should have it's strides re-calculated.
+        @myriadX - set to True if the strides should consider padding for myriadX hardware requirements.
+        @concat - A 3-element array (X, Y, Z) containing alternate values for dimensions when concatenated.
+        """
+
+        if where == "output":
+            order = self.outputLayout
+
+            dimX = self.outputDimX
+            dimY = self.outputDimY
+            dimZ = self.outputDimZ
+
+            if concat[0] != 0:
+                print(concat[0], "!=", 0)
+                dimX = concat[0]
+            if concat[1] != 0:
+                dimY = concat[1]
+            if concat[2] != 0:
+                dimZ = concat[2]
+
+            if myriadX:
+                dimX = int (((dimX + 7)//8)*8)
+
+
+            if order == StorageOrder.orderYZX:
+                self.outputStrideX = 2
+                self.outputStrideZ = dimX * self.outputStrideX
+                self.outputStrideY = dimZ * self.outputStrideZ
+            elif order == StorageOrder.orderYXZ:
+                self.outputStrideZ = 2
+                self.outputStrideX = dimZ * self.outputStrideZ
+                self.outputStrideY = dimX * self.outputStrideX
+            elif order == StorageOrder.orderZYX:
+                self.outputStrideX = 2
+                self.outputStrideY = dimX * self.outputStrideX
+                self.outputStrideZ = dimY * self.outputStrideY
+            else:
+                print(order)
+                assert 0, "function not implemented for layout"
+        elif where == "input":
+            order = self.definition.requirements["input"]["layout"]
+
+            dimX = self.inputDimX
+            dimY = self.inputDimY
+            dimZ = self.inputDimZ
+
+            if concat[0] != 0:
+                print(concat[0], "!=", 0)
+                dimX = concat[0]
+            if concat[1] != 0:
+                dimY = concat[1]
+            if concat[2] != 0:
+                dimZ = concat[2]
+
+            if myriadX:
+                dimX = int (((dimX + 7)//8)*8)
+                dimZ = dimZ if dimZ > 3 else 4
+
+
+            if order == StorageOrder.orderYZX:
+                self.inputStrideX = 2
+                self.inputStrideZ = dimX * self.inputStrideX
+                self.inputStrideY = dimZ * self.inputStrideZ
+            elif order == StorageOrder.orderYXZ:
+                self.inputStrideZ = 2
+                self.inputStrideX = dimZ * self.inputStrideZ
+                self.inputStrideY = dimX * self.inputStrideX
+            elif order == StorageOrder.orderZYX:
+                self.inputStrideX = 2
+                self.inputStrideY = dimX * self.inputStrideX
+                self.inputStrideZ = dimY * self.inputStrideY
+            else:
+                print(order)
+                assert 0, "function not implemented for layout"
+        elif where in ["taps","weights"]:
+            order = self.tapLayout
+
+            dimX = self.tapDimX
+            dimY = self.tapDimY
+            dimZ = self.tapDimZ
+
+            if concat[0] != 0:
+                print(concat[0], "!=", 0)
+                dimX = concat[0]
+            if concat[1] != 0:
+                dimY = concat[1]
+            if concat[2] != 0:
+                dimZ = concat[2]
+
+            if myriadX:
+                dimX = int (((dimX + 7)//8)*8)
+
+
+            if order == StorageOrder.orderYZX:
+                self.tapStrideX = 2
+                self.tapStrideZ = dimX * self.tapStrideX
+                self.tapStrideY = dimZ * self.tapStrideZ
+            elif order == StorageOrder.orderYXZ:
+                self.outputStrideZ = 2
+                self.tapStrideX = dimZ * self.tapStrideZ
+                self.tapStrideY = dimX * self.tapStrideX
+            elif order == StorageOrder.orderZYX:
+                self.tapStrideX = 2
+                self.tapStrideY = dimX * self.tapStrideX
+                self.tapStrideZ = dimY * self.tapStrideY
+            else:
+                print(order)
+                assert 0, "function not implemented for layout"
+        else:
+            assert 0, "Function not supported for this buffer type"
+
+    def add_conversion_layers(self):
+        """
+        Handles conversion between layers of different data layouts.
+
+        If a common format is applicable, it will convert the dimensions to fit.
+        Otherwise, a conversion layer is placed between them.
+        """
+
+        hardware_layers = [StageType.myriadX_convolution, StageType.myriadX_fully_connected_layer, StageType.myriadX_pooling]
+        layers_that_support_hw = [StageType.LRN,
+            StageType.depthwise_convolution,
+            # StageType.soft_max,
+            StageType.normalize
+            ]
+        # layers_that_support_hw = []   # FOR TESTING
+
+        if self.tail and self.op != StageType.none:
+            for child_idx in range(len(self.tail)):
+                child = self.tail[child_idx]
+                """
+                Ensure outputLayout is instanciated.
+                Note: This is an unsustainable appproach. The output layout will not always be the same as input.
+                """
+                if not hasattr(self, 'outputLayout'):
+                    self.outputLayout = self.definition.requirements["input"]["layout"]
+
+                my_req = self.outputLayout
+                child_req = child.definition.requirements
+
+                """
+                Some software layers can work with data in hardware layouts,
+                If a hardware layer is followed by such a software layer, the software layer is converted appropiately.
+                Note: this does not work with FCL as a prior hardware stage currently as it has different restrictions.
+                """
+                if (my_req != child_req["input"]["layout"]
+                        and my_req in [StorageOrder.orderZYX, StorageOrder.orderYXZ, StorageOrder.orderYZX]
+                        and child.op in layers_that_support_hw):
+                    child.definition.changeLayoutRequirements("input", self.outputLayout)
+
+                    # See comment above, Assumes follow-through of layout and dims/strides.
+                    child.outputLayout = self.outputLayout # self.definition.requirements["input"]["layout"]
+
+                    if len(child.top) > 1:
+                        # Ensure concat is accounted for
+                        concat_Z = self.concatOutputSize//(self.outputDimX*self.outputDimY*2)
+                        child.inputDimZ = concat_Z
+                        child.outputDimZ = concat_Z
+
+                    child.recalculate_stride("input", myriadX=True)
+                    child.recalculate_stride("output", myriadX=True)
+
+                    self.recalculate_stride("output", myriadX=True)
+
+                """
+                The same for if we have a software layer followed
+                """
+                if (my_req != child_req["input"]["layout"]
+                        and child_req["input"]["layout"] in [StorageOrder.orderZYX, StorageOrder.orderYXZ, StorageOrder.orderYZX]
+                        and self.op in layers_that_support_hw):
+                    self.definition.changeLayoutRequirements("input", child.definition.requirements["input"]["layout"])
+                    self.recalculate_stride("output", myriadX=True)
+
+                    # Assumes follow-through of layout and dims/strides.
+                    child.outputLayout = self.definition.requirements["input"]["layout"]
+                    child.recalculate_stride("output", myriadX=True)
+
+
+                output_layout = self.outputLayout
+
+
+                """
+                If there is a mis-match of layouts and the child layer is not hardware friendly
+                """
+                if child_req["input"]["layout"] != output_layout and \
+                    child.op not in layers_that_support_hw and \
+                    child.op is not StageType.storage_order_convert and \
+                    self.op is not StageType.storage_order_convert:
+
+                    if child.op in hardware_layers and self.op in hardware_layers:
+                        assert 0, "Something has gone wrong. It is likely a mismatch of Hw Configuration and network description"
+
+                    if self.op not in hardware_layers and child.op not in hardware_layers:
+                        """
+                        The case where both layers are software.
+                        """
+                        self.outputLayout = child.definition.requirements["input"]["layout"]
+                        self.recalculate_stride("output", myriadX=False)
+
+                    else:
+                        """
+                        The case where the one layer is hardware and the other is software.
+                        """
+                        # Create a storage order conversion layer and insert it into the graph. # TODO: Untested on Concats and fancier operations.
+                        new_node = NetworkStage(
+                                "Convert_"+self.unprocessed_name+"_"+child.unprocessed_name,
+                                None,   # Top
+                                None,   # Storage Order
+                                0,   # Pad Y
+                                0,   # Pad X
+                                None,   # Pad Type
+                                None,   # Dtype
+                                None,   # Precision
+                                StageType.storage_order_convert, # OpType
+                                0,      # Op Y
+                                0,      # Op X
+                                0,      # Stride Y
+                                0,      # Stride X
+                                0,      # X
+                                0,      # Y
+                                0,      # C
+                                0,      # FH
+                                0,      # FW
+                                0,      # K
+                                None,   # Weights
+                                None, # Weights Storage Order
+                                None,   # Bias
+                                None,    # Pre-Op
+                                None,   # Post-Op
+                                None,         # Post-Op Param
+                                None,        # Post-Op Stride X
+                                None,        # Post-Op Stride Y
+                                network=self.network
+                            )
+
+                        # As we are post-finalizing, the out buffer of A and in buffer of B in the network A=B are the same,
+                        # We insert a 'C' node to differenciate. A=C=B
+
+                        if len(child.top) > 1:
+                            # Concat only needs one new buffer for N stages.
+
+                            concat_Z = self.concatOutputSize//(self.outputDimX*self.outputDimY*2)
+                            if self.concatBufferOffset == 0:
+                                # If it's the first stage of the concat, get a new one.
+                                new_buffer_location, new_buffer_index = get_zero_buffer(np.zeros((concat_Z,self.outputDimY,self.outputDimX)), DataType.fp16)
+                                # Create a reference for the others to pick up.
+                                for parents in child.network.search_several(child.top):
+                                    parents.convertBuffer_concat = (new_buffer_location, new_buffer_index)
+                            else:
+                                # Get the old one from the stage that previously created one.
+                                new_buffer_location, new_buffer_index = self.convertBuffer_concat
+                        else:
+                            # Create a new buffer between A and B
+                            new_buffer_location, new_buffer_index = get_zero_buffer(np.zeros((self.outputDimZ,self.outputDimY,self.outputDimX)), DataType.fp16)
+
+                        # print("Convert after", self.unprocessed_name)
+                        # print("Output of said layer:", self.outputDimX, self.outputDimY, self.outputDimZ)
+
+                        if len(child.top) > 1:
+                            concat_Z = self.concatOutputSize//(self.outputDimX*self.outputDimY*2)
+                            concat_mods = [0, 0, concat_Z]
+                        else:
+                            concat_mods = [0, 0, 0]
+
+                        # Input
+                        new_node.inputDimX = self.outputDimX
+                        new_node.inputDimY = self.outputDimY
+                        new_node.inputDimZ = self.outputDimZ
+                        new_node.dataPointer = self.outputPointer
+                        new_node.dataIndex = self.outputIndex
+                        new_node.definition.requirements["input"]["layout"] = output_layout
+
+                        new_node.recalculate_stride("input", myriadX=True, concat=concat_mods)
+
+                        # Input
+                        new_node.outputDimX = child.inputDimX
+                        new_node.outputDimY = child.inputDimY
+                        new_node.outputDimZ = child.inputDimZ
+                        new_node.outputPointer = new_buffer_location # child.dataPointer
+                        new_node.outputIndex = new_buffer_index # child.dataIndex
+                        new_node.outputLayout = child.definition.requirements["input"]["layout"]
+
+                        new_node.recalculate_stride("output", concat=concat_mods)
+
+                        child.dataPointer = new_buffer_location
+                        child.dataIndex = new_buffer_index
+
+                        # net.insert_node_between(this, and_this, withObject)
+                        self.network.insert_node(
+                            new_node,
+                            self,
+                            child
+                        )
+                elif child_req["input"]["layout"] != output_layout and \
+                    self.op in layers_that_support_hw and \
+                    child.op in layers_that_support_hw and \
+                    child.op is not StageType.storage_order_convert and \
+                    self.op is not StageType.storage_order_convert:
+                    """
+                    The case where we have a hw-friendly SWlayer followed by another
+                    hw-friendly SWLayer that is not converted yet.
+                    """
+                    child.definition.requirements["input"]["layout"] = self.definition.requirements["input"]["layout"]
+                    child.outputLayout = self.outputLayout
+                    child.recalculate_stride("input", myriadX=True)
+                    child.recalculate_stride("output", myriadX=True)
+
+        else:
+            # Nothing to be done/
+            pass
+
+
+    def bundle(self):
+
+        self.bundled = True
+
+        self.dataBUF = Buffer(self.inputDimX,
+                              self.inputDimY,
+                              self.inputDimZ,
+                              self.inputStrideX,
+                              self.inputStrideY,
+                              self.inputStrideZ,
+                              self.dataPointer,
+                              self.dataIndex,
+                              order=self.definition.requirements["input"]["layout"])
+
+        if not hasattr(self, 'tapLayout'):
+            self.tapLayout = StorageOrder.orderXYZ
+            self.tapStrideZ = 2
+            self.tapStrideY = self.tapStrideZ * self.tapDimZ
+            self.tapStrideX = self.tapStrideY * self.tapDimY
+
+        if not hasattr(self, 'outputLayout'):
+            # Unsustainable. Output will not always be same as input.
+            self.outputLayout = self.definition.requirements["input"]["layout"]
+
+        self.tapsBUF = Buffer(self.tapDimX,
+                             self.tapDimY,
+                             self.tapDimZ,
+                             self.tapStrideX,
+                             self.tapStrideY,
+                             self.tapStrideZ,
+                             self.tapsPointer,
+                             self.tapsIndex,
+                             order=self.tapLayout
+                            )
+
+        self.outputBUF = Buffer(self.outputDimX,
+                                self.outputDimY,
+                                self.outputDimZ,
+                                self.outputStrideX,
+                                self.outputStrideY,
+                                self.outputStrideZ,
+                                self.outputPointer,
+                                self.outputIndex,
+                                order=self.outputLayout
+                                )
+        self.biasBUF = Buffer(None, None, None,
+                              None, None, None,
+                              self.biasPointer, self.biasIndex,
+                              order=StorageOrder.orderZYX)
+        self.scaleBUF = Buffer(None, None, None,
+                              None, None, None,
+                              self.scalePointer, self.scaleIndex)
+
+        self.opParamsBUF = Buffer(None, None, None,
+                              None, None, None,
+                              self.opParamsPointer, self.opParamsIndex)
+
+        for t in self.tail:
+            if not hasattr(t,"bundled"):
+                t.bundle()
+
     def summaryStats(self):
         totalTime = self.ms
         totalBW = self.getBW()
 
+        self.summarized = True
+
         for t in self.tail:
-            a, b = t.summaryStats()
-            totalTime += a
-            totalBW += b
+            if not hasattr(t, "summarized"):
+                a, b = t.summaryStats()
+                totalTime += a
+                totalBW += b
 
         return totalTime, totalBW
-
-    def newick(self, head=False):
-        """
-        output a file containing a description of the node in Newick format.
-        To be called from Network.head and traversed.
-        :param head:
-        :return:
-        """
-        nw = str(self.unprocessed_name) + ":" + str(len(self.tail))
-
-        if len(self.tail) != 0:
-            nw += ",("
-            for idx, t in enumerate(self.tail):
-                nw += t.newick()
-                if idx + 1 != len(self.tail):
-                    nw += ","
-            nw += ")"
-        else:
-            pass
-        return nw
 
     def graphviz(
             self,
@@ -1131,6 +1745,18 @@ class NetworkStage:
             bws_max,
             flop_min,
             flop_max):
+        """
+        Create the Graph Node for this layer.
+        :param dot: graphviz graph object
+        :param ms_min: Minimum time for a layer in the graph (used for color scaling)
+        :param ms_max: Maximum time for a layer in the graph (used for color scaling)
+        :param bws_min: Minimum Bandwidth for a layer in the graph (used for color scaling)
+        :param bws_max: Maximum Bandwidth for a layer in the graph (used for color scaling)
+        :param flop_min: Minimum FLOPs for a layer in the graph (used for color scaling)
+        :param flop_max: Maximum FLOPs for a layer in the graph (used for color scaling)
+        :return: the graph object with the graphical node for this layer attached, NetworkStages for recursion
+        """
+
 
         table = '''<
 <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="3">
@@ -1160,9 +1786,6 @@ class NetworkStage:
         dot.node(self.unprocessed_name, table, shape="plaintext")
         if self.top is not None:
             for t in self.top:
-                if t is None:
-                    print(self.unprocessed_name, 'has no top')
-                    continue
                 if not isinstance(t, str):
                     for tt in t:
                         dot.edge(tt, self.unprocessed_name)
@@ -1173,10 +1796,12 @@ class NetworkStage:
             dot.edge("Input", self.unprocessed_name)
 
         last_nodes = []
+        self.drawn = True
         for t in self.tail:
-            dot, last = t.graphviz(
-                dot, ms_min, ms_max, bws_min, bws_max, flop_min, flop_max)
-            last_nodes.extend(last)
+            if not hasattr(t, "drawn"):
+                dot, last = t.graphviz(
+                    dot, ms_min, ms_max, bws_min, bws_max, flop_min, flop_max)
+                last_nodes.extend(last)
         if len(self.tail) == 0:
             last_nodes = [self.unprocessed_name]
 

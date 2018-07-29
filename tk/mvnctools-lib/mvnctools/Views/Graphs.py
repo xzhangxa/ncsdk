@@ -1,4 +1,4 @@
-# Copyright 2017 Intel Corporation.
+# Copyright 2018 Intel Corporation.
 # The source code, information and material ("Material") contained herein is
 # owned by Intel Corporation or its suppliers or licensors, and title to such
 # Material remains with Intel Corporation or its suppliers or licensors.
@@ -51,7 +51,6 @@ def get_normalized_color(start_color, end_color, start_no, end_no, value):
     adjusted_g = g_diff * percentage + a_g
     adjusted_b = b_diff * percentage + a_b
 
-    invalid_values = [float('NaN'), float('Inf')]
     if math.isnan(adjusted_r) or math.isnan(
             adjusted_b) or math.isnan(adjusted_g):
         warnings.warn("Non-Finite value detected", RuntimeWarning)
@@ -130,25 +129,13 @@ def generate_graphviz(net, blob, filename="output"):
 <TR><TD  BGCOLOR = "#E2E2E2" COLSPAN="3">Bandwidth {2} MB/sec</TD></TR>
 <TR><TD  BGCOLOR = "#DADADA" COLSPAN="3">This network is Compute bound</TD></TR>
 </TABLE>>
-'''.format((blob.myriad_params.lastShave.value - blob.myriad_params.firstShave.value) + 1, format(total_time, ".2f"), format((((total_bw / (1024 * 1024)) / (total_time / 1000))), ".2f"))
+'''.format((blob.myriad_params.lastShave.value - blob.myriad_params.firstShave.value) + 1, format(total_time, ".2f"),
+           format((((total_bw / (1024 * 1024)) / (total_time / 1000))), ".2f"))
 
     dot.node("Summary", table, shape="plaintext")
     dot.render()
 
     generate_html_report(filename + ".gv.svg", net.name, filename=filename)
-
-
-def generate_ete(blob):
-    print("Currently does not work alongside caffe integration due to GTK conflicts")
-    """
-from ete3 import *
-f = open("Graph.txt")
-graph = f.read()
-f.close()
-print(graph)
-t = Tree(graph)
-t.show()
-    """
 
 
 def dataurl(file):
@@ -220,20 +207,37 @@ h3{
 
 
 def generate_temperature_report(data, filename="output"):
-    tempBuffer = np.trim_zeros(data)
+    warnings.warn("Temperature Mode is not an official mode and has no guarantees of retention/upkeep", PendingDeprecationWarning)
+    temperature_buffer = np.trim_zeros(data)
 
-    if tempBuffer.size == 0:
+    if temperature_buffer.size == 0:
         throw_error(ErrorTable.NoTemperatureRecorded)
 
-    print(tempBuffer)
-    print("Average Temp", np.mean(tempBuffer))
-    print("Peak Temp", np.amax(tempBuffer))
+    print(temperature_buffer)
+    print("Average Temp", np.mean(temperature_buffer))
+    print("Peak Temp", np.amax(temperature_buffer))
 
     try:
         import matplotlib.pyplot as plt
-        plt.plot(tempBuffer)
+        plt.plot(temperature_buffer)
         plt.ylabel('Temp')
         # plt.show()
         plt.savefig(filename + "_temperature.png")
     except BaseException:
         pass
+
+def viz_opt_graph(graph, filename, opt_lst = []):
+    dot = Digraph(name=filename, format='svg')
+    for key in graph.keys():
+        if graph[key].name in opt_lst:
+            dot.node(graph[key].name, "k = {}\n cost = {}".format(graph[key].name, graph[key].distance), color = 'lightblue2', style='filled')  
+        else:
+            dot.node(graph[key].name, "k = {}\n cost = {}".format(graph[key].name, graph[key].distance)) 
+
+    for key in graph.keys():
+        for conn_k in graph[key].connection.keys():
+            if graph[key].connection_conf[conn_k]:
+                dot.edge(graph[key].name, conn_k, label=str("mode{}\n{}".format(graph[key].connection_conf[conn_k], graph[key].connection[conn_k])))
+            else:
+                dot.edge(graph[key].name, conn_k, label=str("{}".format(graph[key].connection[conn_k])))
+    dot.render()

@@ -6,7 +6,7 @@
 sudo apt-get install build-essential libusb-1.0-0-dev cmake
 
 # if Python wrapper or toolkit are needed
-sudo apt-get python3-pip python3-tk python3-wheel
+sudo apt-get python3-pip python3-tk python3-wheel libgraphviz-dev
 ```
 
 ## Build configurations of the source code
