@@ -22,8 +22,6 @@ from mvnctools.Models.NetworkStage import *
 from mvnctools.Models.MyriadParam import *
 from mvnctools.Models.EnumDeclarations import *
 from mvnctools.Controllers.Optimizer import postParsingOptimizations, selectImplementations, streamEverythingSchedule, fixTensors, eliminateNoOps
-from mvnctools.Controllers.Parsers.Caffe import CaffeParser
-from mvnctools.Controllers.Parsers.TensorFlow import TensorFlowParser
 from mvnctools.Controllers.Parsers.Phases import serializeNewFmt, implicitConcatBinding, flattenFCLayers, compatibilityPadding, SplitGroupConvolutions
 
 from mvnctools.Controllers.Parsers.Phases import adaptHwWeights, cropNetwork, forceLayout, squashInPlaceLayers, convertBiasLayersToEltwise, breakUpInnerLRN
@@ -46,8 +44,10 @@ def load_network(arguments, parser, myriad_conf, debug=False):
     if arguments.new_parser:
 
         if parser == Parser.Caffe:
+            from mvnctools.Controllers.Parsers.Caffe import CaffeParser
             p = CaffeParser()
         elif parser == Parser.TensorFlow:
+            from mvnctools.Controllers.Parsers.TensorFlow import TensorFlowParser
             p = TensorFlowParser()
         else:
             throw_error(ErrorTable.ParserNotSupported, parser.name)
