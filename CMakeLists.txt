@@ -5,6 +5,10 @@ set(ncsdk_VERSION_MAJOR 1)
 set(ncsdk_VERSION_MINOR 12)
 set(ncsdk_VERSION_PATCH 0)
 
+if(APPLE)
+    set(CMAKE_MACOSX_RPATH 1)
+endif()
+
 # set CMAKE_INSTALL_* if not defined
 include(GNUInstallDirs)
 

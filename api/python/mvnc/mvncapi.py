@@ -19,12 +19,19 @@ import numpy
 import warnings
 from enum import Enum
 from ctypes import *
+import platform
+import os
+
+lib_path = './libmvnc.so'
+system = platform.system()
+if system == 'Darwin':
+    lib_path = './libmvnc.dylib'
 
 # The toolkit wants its local version
 try:
-    f = CDLL("./libmvnc.so")
+    f = CDLL(lib_path)
 except:
-    f = CDLL("libmvnc.so")
+    f = CDLL(os.path.basename(lib_path))
 
 warnings.simplefilter('default', DeprecationWarning)
 

@@ -1,12 +1,24 @@
 # Build/Install
 
-## Dependencies (Ubuntu 16.04 and other Debian based Linux Distributions)
+## Dependencies
+
+### Ubuntu 16.04 and other Debian based Linux Distributions
 
 ```
 sudo apt-get install build-essential libusb-1.0-0-dev cmake
 
 # if Python wrapper or toolkit are needed
 sudo apt-get python3-pip python3-tk python3-wheel
+```
+
+### Mac OS X
+
+[Homebrew](https://brew.sh) is used to install dependencies. Please install Homebrew first, then:
+```
+brew install cmake libusb graphviz python3
+
+# At the time of writing, tensorflow doesn't support Python3.7. If it supports latest version in Homebrew nothing more is needed. Otherwise an older version should be used, to install Python3.6 from Homebrew, type:
+brew install https://raw.githubusercontent.com/Homebrew/homebrew-core/f2a764ef944b1080be64bd88dca9a1d80130c558/Formula/python.rb
 ```
 
 ## Build configurations of the source code
