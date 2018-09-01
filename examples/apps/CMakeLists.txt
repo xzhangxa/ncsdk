@@ -1,5 +1,5 @@
 add_subdirectory(hello_ncs_cpp)
-if(WITH_TOOLKIT)
+if(WITH_TOOLKIT AND NOT WIN32)
     if(${caffe_error} STREQUAL "0")
         add_subdirectory(multistick_cpp)
     endif()

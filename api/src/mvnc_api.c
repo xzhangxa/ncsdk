@@ -293,6 +293,7 @@ static void initialize()
         initialize_loglevel();
 
     initialized = 1;
+    ghandler.protocol = 0;
     int sc = XLinkInitialize(&ghandler);    //need to be called once
     if (sc != X_LINK_SUCCESS) {
         mvLog(MVLOG_ERROR, "Initialization failed\n");
@@ -506,6 +507,10 @@ ncStatus_t ncDeviceOpen(struct ncDeviceHandle_t * deviceHandle)
     else
         mvLog(MVLOG_INFO, "%s() XLinkBootRemote returned success %d\n", __func__, rc);
 
+#if (defined(_WIN32) || defined(_WIN64) )
+	usleep(2000000);
+#endif
+
     double waittm = timeInSeconds() + STATUS_WAIT_TIMEOUT;
     while (timeInSeconds() < waittm && rc == 0) {
         XLinkHandler_t *handler = calloc(1, sizeof(XLinkHandler_t));
@@ -551,7 +556,7 @@ ncStatus_t ncDeviceOpen(struct ncDeviceHandle_t * deviceHandle)
         mvLog(MVLOG_INFO, "Booted %s -> %s\n",
               d->dev_addr, d->dev_file ? d->dev_file : "VSC");
         pthread_mutex_unlock(&globalMutex);
-        sleep(1);   //Allow device to initialize the XLink
+        usleep(1000000);   //Allow device to initialize the XLink
         streamId_t streamId = XLinkOpenStream(d->usb_link->linkId, "deviceMonitor",
                                                 CONFIG_STREAM_SIZE);
         if (streamId == INVALID_STREAM_ID) {
@@ -932,13 +937,9 @@ ncStatus_t ncGraphAllocate(struct ncDeviceHandle_t * deviceHandle,
     static int graphIdCount = 0;
     struct _graphPrivate_t *g = graphHandle->private_data;
 
-    struct _devicePrivate_t *d = devices;
-    if (graphBufferLength > d->dev_attr.max_memory) {
-        mvLog(MVLOG_ERROR, "The graph file is bigger than the device memory");
-        return NC_OUT_OF_MEMORY;
-    }
-
     pthread_mutex_lock(&globalMutex);
+
+    struct _devicePrivate_t *d = devices;
     while (d) {
         if (d == deviceHandle->private_data)
             break;
@@ -951,6 +952,11 @@ ncStatus_t ncGraphAllocate(struct ncDeviceHandle_t * deviceHandle,
         return NC_INVALID_PARAMETERS;
     }
     pthread_mutex_unlock(&globalMutex);
+
+    if (graphBufferLength > d->dev_attr.max_memory) {
+        mvLog(MVLOG_ERROR, "The graph file is bigger than the device memory");
+        return NC_OUT_OF_MEMORY;
+    }
 
     g->id = graphIdCount++;
     streamId_t streamId;

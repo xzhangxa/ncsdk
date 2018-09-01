@@ -202,7 +202,9 @@ usbBootError_t usb_find_device(unsigned idx, char *addr, unsigned addrsize, void
     // 2 => pid
     // '255-' x 7 (also gives us nul-terminator for last entry)
     // 7 => to add "-maXXXX"
-    uint8_t devs[15][2 + 2 + 4 * 7 + 7] = { 0 };//to store ven_id,dev_id;
+    //uint8_t devs[15][2 + 2 + 4 * 7 + 7] = { 0 };//to store ven_id,dev_id;
+    static uint8_t devs[15][2 + 2 + 4 * 7 + 7] = { 0 };//to store ven_id,dev_id;
+    static int devs_cnt = 0;
 #else
     static libusb_device **devs;
     libusb_device *dev;
@@ -226,7 +228,10 @@ usbBootError_t usb_find_device(unsigned idx, char *addr, unsigned addrsize, void
                 fprintf(stderr, "Unable to get USB device list: %s\n", libusb_strerror(res));
             return USB_BOOT_ERROR;
         }
+        devs_cnt = res;
     }
+    else
+        res = devs_cnt;
 #else
     if(!devs || idx == 0)
     {
@@ -421,7 +426,6 @@ static int wait_findopen(const char *device_address, int timeout, libusb_device 
         i++;
         usleep(100000);
     }
-    return 0;
 }
 
 static int send_file(libusb_device_handle *h, uint8_t endpoint, const uint8_t *tx_buf, unsigned filesize)

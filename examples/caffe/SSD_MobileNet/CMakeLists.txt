@@ -6,9 +6,13 @@ add_custom_command(
 )
 add_custom_target(compile_caffe_mobilenet_ssd DEPENDS graph)
 
+set(PYTHON_EXECUTABLE python3)
+if(WIN32)
+    set(PYTHON_EXECUTABLE python)
+endif()
 add_custom_command(
     OUTPUT MobileNetSSD_deploy.caffemodel
-    COMMAND python3 download_mobilenet_ssd.py
+    COMMAND ${PYTHON_EXECUTABLE} download_mobilenet_ssd.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
 )
 add_custom_target(download_mobilenet_ssd_model DEPENDS MobileNetSSD_deploy.caffemodel)

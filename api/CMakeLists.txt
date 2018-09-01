@@ -1,20 +1,55 @@
 file(STRINGS ${CMAKE_CURRENT_LIST_DIR}/version.txt VER_NUM)
 
-find_package(Threads)
-find_package(LibUSB REQUIRED)
+if(UNIX)
+    find_package(Threads)
+    find_package(LibUSB REQUIRED)
+endif()
 
-file(GLOB_RECURSE SRCS "*.c")
-file(GLOB_RECURSE HDRS "*.h")
 file(GLOB INC_HDRS "include/*.h")
+if(WIN32)
+    file(GLOB SRCS
+         ${CMAKE_CURRENT_LIST_DIR}/src/*.c
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLink/shared/*.c
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLink/pc/*.c
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/USB_WIN/*.c
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/WinPthread/*.c
+    )
+
+    file(GLOB HDRS
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLink/shared/*.h
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLink/pc/*.h
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/USB_WIN/*.h
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/WinPthread/*.h
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/shared/include/*.h
+    )
+else()
+    file(GLOB SRCS
+         ${CMAKE_CURRENT_LIST_DIR}/src/*.c
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLink/shared/*.c
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLink/pc/*.c
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLinkConsole/pc/*.c
+    )
+
+    file(GLOB HDRS
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLink/shared/*.h
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLink/pc/*.h
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/components/XLinkConsole/pc/*.h
+         ${CMAKE_CURRENT_LIST_DIR}/src/common/shared/include/*.h
+    )
+endif()
+
 add_library(mvnc SHARED ${SRCS} ${HDRS} ${INC_HDRS})
+
 set_target_properties(mvnc PROPERTIES LINKER_LANGUAGE C)
+target_compile_definitions(mvnc PRIVATE __PC__ USE_USB_VSC DEVICE_SHELL_ENABLED EXCLUDE_HIGHCLASS
+                                        VERSION_NAME="${VER_NUM}")
 if(WIN32)
     target_compile_options(mvnc PRIVATE /W4)
+    target_compile_definitions(mvnc PRIVATE _CRT_SECURE_NO_WARNINGS)
 else()
     target_compile_options(mvnc PRIVATE -O2 -Wall -MMD -MP)
 endif()
-target_compile_definitions(mvnc PRIVATE __PC__ USE_USB_VSC DEVICE_SHELL_ENABLED EXCLUDE_HIGHCLASS
-                                        VERSION_NAME="${VER_NUM}")
+
 target_include_directories(mvnc
     PUBLIC
         $<INSTALL_INTERFACE:include>
@@ -27,9 +62,20 @@ target_include_directories(mvnc
         ${CMAKE_CURRENT_LIST_DIR}/src/common/shared/include
         ${LibUSB_INCLUDE_DIRS}
 )
-target_link_libraries(mvnc PRIVATE ${CMAKE_THREAD_LIBS_INIT} ${LibUSB_LIBRARIES} ${CMAKE_DL_LIBS})
 
-file(COPY ${CMAKE_CURRENT_LIST_DIR}/src/mvnc/MvNCAPI-ma2450.mvcmd DESTINATION ${OUTPUT_DIR}/mvnc)
+if(WIN32)
+    target_include_directories(mvnc
+        PRIVATE ${CMAKE_CURRENT_LIST_DIR}/src/common/components/USB_WIN
+                ${CMAKE_CURRENT_LIST_DIR}/src/common/components/WinPthread
+    )
+    add_custom_command(TARGET mvnc POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_LIST_DIR}/src/mvnc/MvNCAPI-ma2450.mvcmd ${OUTPUT_DIR}/$<CONFIG>/mvnc/MvNCAPI-ma2450.mvcmd
+        COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_LIST_DIR}/src/mvnc/MvNCAPI-ma2480.mvcmd ${OUTPUT_DIR}/$<CONFIG>/mvnc/MvNCAPI-ma2480.mvcmd
+    )
+else()
+    target_link_libraries(mvnc PRIVATE ${CMAKE_THREAD_LIBS_INIT} ${LibUSB_LIBRARIES} ${CMAKE_DL_LIBS})
+    file(COPY ${CMAKE_CURRENT_LIST_DIR}/src/mvnc/MvNCAPI-ma2450.mvcmd DESTINATION ${OUTPUT_DIR}/mvnc)
+endif()
 
 py_packaging(mvnc_python python ${OUTPUT_DIR})
 

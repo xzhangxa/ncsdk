@@ -1,7 +1,11 @@
 set(folder @PYFOLDER@)
 set(dest @PYDESTFOLDER@)
+set(PYTHON_EXECUTABLE python3)
+if(WIN32)
+    set(PYTHON_EXECUTABLE python)
+endif()
 execute_process(
-    COMMAND python3 setup.py -q bdist_wheel
+    COMMAND ${PYTHON_EXECUTABLE} setup.py -q bdist_wheel
     WORKING_DIRECTORY ${folder}
 )
 file(GLOB wheel "${folder}/dist/*.whl")

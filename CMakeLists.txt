@@ -33,24 +33,26 @@ endif()
 
 add_subdirectory(examples)
 
-include(ExternalProject)
-ExternalProject_Add(
-    caffe
-    GIT_REPOSITORY https://github.com/weiliu89/caffe.git
-    GIT_TAG ssd
-    CMAKE_ARGS -Dpython_version=3 -DCPU_ONLY=ON -DBLAS=Open -DUSE_OPENCV=OFF -DCMAKE_INSTALL_PREFIX=${PROJECT_SOURCE_DIR}/caffe
-    PREFIX ${PROJECT_SOURCE_DIR}/caffe
-    EXCLUDE_FROM_ALL TRUE
-)
-add_custom_target(pycaffe)
-add_dependencies(pycaffe caffe)
-add_custom_command(
-    TARGET pycaffe
-    POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E echo "\n"
-    COMMAND ${CMAKE_COMMAND} -E echo "Set PYTHONPATH to ${PROJECT_SOURCE_DIR}/caffe/python to use Caffe Python library"
-    COMMAND ${CMAKE_COMMAND} -E echo "\n"
-)
+if(UNIX)
+    include(ExternalProject)
+    ExternalProject_Add(
+        caffe
+        GIT_REPOSITORY https://github.com/weiliu89/caffe.git
+        GIT_TAG ssd
+        CMAKE_ARGS -Dpython_version=3 -DCPU_ONLY=ON -DBLAS=Open -DUSE_OPENCV=OFF -DCMAKE_INSTALL_PREFIX=${PROJECT_SOURCE_DIR}/caffe
+        PREFIX ${PROJECT_SOURCE_DIR}/caffe
+        EXCLUDE_FROM_ALL TRUE
+    )
+    add_custom_target(pycaffe)
+    add_dependencies(pycaffe caffe)
+    add_custom_command(
+        TARGET pycaffe
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E echo "\n"
+        COMMAND ${CMAKE_COMMAND} -E echo "Set PYTHONPATH to ${PROJECT_SOURCE_DIR}/caffe/python to use Caffe Python library"
+        COMMAND ${CMAKE_COMMAND} -E echo "\n"
+    )
+endif()
 
 # setup/install project CMake config file
 set(INSTALL_CONFIG_DIR ${CMAKE_INSTALL_LIBDIR}/cmake/ncsdk)

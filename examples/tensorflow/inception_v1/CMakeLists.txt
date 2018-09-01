@@ -4,10 +4,15 @@ download_extract(
     "Download inception_v1"
     download_inception_v1
 )
+
+set(PYTHON_EXECUTABLE python3)
+if(WIN32)
+    set(PYTHON_EXECUTABLE python)
+endif()
 add_custom_command(
     TARGET download_inception_v1
     POST_BUILD
-    COMMAND python3 inception-v1.py
+    COMMAND ${PYTHON_EXECUTABLE} inception-v1.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
 )
 

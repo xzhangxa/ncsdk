@@ -1,6 +1,6 @@
 add_custom_target(examples)
 
-if(WITH_TOOLKIT)
+if(WITH_TOOLKIT AND NOT WIN32)
     execute_process(COMMAND python3 -c "import caffe" RESULT_VARIABLE caffe_error ERROR_QUIET)
     if(${caffe_error} STREQUAL "0")
         add_subdirectory(caffe)

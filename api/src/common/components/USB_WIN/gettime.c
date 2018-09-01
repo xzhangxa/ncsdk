@@ -1,5 +1,5 @@
 /*
-* Copyright 2018 Intel Corporation.
+* Copyright 2017 Intel Corporation.
 * The source code, information and material ("Material") contained herein is
 * owned by Intel Corporation or its suppliers or licensors, and title to such
 * Material remains with Intel Corporation or its suppliers or licensors.
@@ -15,26 +15,17 @@
 * Any license under such intellectual property rights must be express and
 * approved by Intel in writing.
 */
-#ifdef __cplusplus
-extern "C" {
-#endif
 
-extern int usb_loglevel;
+//#include "windows.h"
+#include <time.h>
+#include "gettime.h"
 
-#define DEFAULT_OPENVID             0x03E7
-#define DEFAULT_OPENPID             0xf63b      // Once opened in VSC mode, VID/PID change
-
-typedef enum usbBootError {
-    USB_BOOT_SUCCESS = 0,
-    USB_BOOT_ERROR,
-    USB_BOOT_DEVICE_NOT_FOUND,
-    USB_BOOT_TIMEOUT
-} usbBootError_t;
-
-usbBootError_t usb_find_device(unsigned idx, char *addr, unsigned addrsize, void **device, int vid, int pid);
-int usb_boot(const char *addr, const void *mvcmd, unsigned size);
-
-
-#ifdef __cplusplus
+int clock_gettime(int dummy, struct timespec *spec)
+{
+	dummy;	// for unreferenced formal parameter warning
+	__int64 wintime; GetSystemTimeAsFileTime((FILETIME*)&wintime);
+	wintime -= 116444736000000000i64;  //1jan1601 to 1jan1970
+	spec->tv_sec = wintime / 10000000i64;           //seconds
+	spec->tv_nsec = wintime % 10000000i64 * 100;      //nano-seconds
+	return 0;
 }
-#endif

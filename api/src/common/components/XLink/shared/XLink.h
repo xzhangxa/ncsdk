@@ -20,6 +20,7 @@
 /// @file
 /// @brief     Application configuration Leon header
 ///
+
 #ifndef _XLINK_H
 #define _XLINK_H
 #include "XLinkPublicDefines.h"
@@ -34,7 +35,6 @@ XLinkError_t XLinkInitialize(XLinkGlobalHandler_t* handler);
 
 // Connects to specific device, starts dispatcher and pings remote
 XLinkError_t XLinkConnect(XLinkHandler_t* handler);
-
 
 // Opens a stream in the remote that can be written to by the local
 // Allocates stream_write_size (aligned up to 64 bytes) for that stream
