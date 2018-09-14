@@ -42,7 +42,7 @@ ExternalProject_Add(
     caffe
     GIT_REPOSITORY https://github.com/weiliu89/caffe.git
     GIT_TAG ssd
-    CMAKE_ARGS -Dpython_version=3 -DCPU_ONLY=ON -DCMAKE_INSTALL_PREFIX=${PROJECT_SOURCE_DIR}/caffe
+    CMAKE_ARGS -Dpython_version=3 -DCPU_ONLY=ON -DBLAS=Open -DUSE_OPENCV=OFF -DCMAKE_INSTALL_PREFIX=${PROJECT_SOURCE_DIR}/caffe
     PREFIX ${PROJECT_SOURCE_DIR}/caffe
     EXCLUDE_FROM_ALL TRUE
 )
