@@ -70,7 +70,7 @@ export PYTHONPATH=`ncsdk-dir`/caffe/python:$PYTHONPATH
 Please refer to [Caffe official website](http://caffe.berkeleyvision.org/installation.html) for dependency libraries to install **BEFORE** 'make pycaffe'. For example if you're on Ubuntu 16.04, this command is all you need:
 
 ```
-sudo apt-get install libprotobuf-dev libleveldb-dev libsnappy-dev libopencv-dev libhdf5-serial-dev protobuf-compiler libboost-all-dev libatlas-base-dev python3-dev python3-numpy libgflags-dev libgoogle-glog-dev liblmdb-dev
+sudo apt-get install libprotobuf-dev libleveldb-dev libsnappy-dev libopencv-dev libhdf5-serial-dev protobuf-compiler libboost-all-dev libopenblas-dev python3-dev python3-numpy libgflags-dev libgoogle-glog-dev liblmdb-dev
 ```
 
 # Examples
